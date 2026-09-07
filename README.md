@@ -5,22 +5,23 @@ cryptographic-operations product. Its public-facing operator is Sacrystan, and
 its prospective command is `sacryd`, pronounced “sacred.”
 
 > [!IMPORTANT]
-> This repository is in its language-neutral genesis stage. It has no
-> implementation, package, supported runtime, protocol, schema, production
-> authority, custody binding, key, credential, provider binding, trusted
-> deployment, or release.
+> This repository contains a non-operational Rust library build skeleton, with
+> no executable or public API. It has no cryptographic-operations implementation,
+> qualified runtime, protocol, schema, production authority, custody binding,
+> key, credential, provider binding, trusted deployment, or release.
 
 ## Current names and open choices
 
 Sacrysty names the project and institution. Sacrystan names the public-facing
-operator. The `sacryd` command name does not select a language, package or
-library coordinate, command grammar, source layout, or requirement to build a
-CLI before one is useful.
+operator. The
+[substrate decision](https://github.com/nisavid/sacrysty/issues/2#issuecomment-5568558765)
+selects one root Rust package/library named `sacrysty`. The prospective `sacryd`
+command will be added only when a concrete helper needs it. Documentation can
+be useful before a CLI exists.
 
 Background workers and published bodies of practice remain unnamed. The
-implementation substrate, package and library coordinates, command grammar,
-schemas, authority semantics, custody model, and protocol implementation remain
-open for their owning Wayfinder work.
+command grammar, schemas, authority semantics, custody model, and protocol
+implementation remain open for their owning Wayfinder work.
 
 ## Ownership boundary
 
@@ -43,8 +44,7 @@ personal surfaces.
 ## Repository layout
 
 - [`contracts/`](contracts/) is reserved for normative contracts and schemas.
-- [`src/`](src/) is reserved for the single primary distribution after its
-  substrate and coordinates are selected.
+- [`src/`](src/) contains the empty library for the single primary distribution.
 - [`adapters/`](adapters/) holds interfaces and maintained reference adapters
   only after a real seam is established.
 - [`profiles/`](profiles/) holds public non-secret policy profiles.
@@ -56,16 +56,29 @@ personal surfaces.
 - [`docs/`](docs/) holds architecture, decisions, provenance, and future
   operator documentation.
 
-## Validate the scaffold
+## Build and validate the skeleton
 
-Run the language-neutral repository checks:
+Install Rust 1.98.1 with Rustup and a native C toolchain. The initial build
+targets are Linux x86_64 GNU and macOS Apple Silicon. From the repository root:
 
 ```sh
+cargo build --frozen
+cargo test --frozen
 ./scripts/check-repository.sh
 ```
 
-These checks validate repository policy only. They do not prove a protocol,
-implementation, release, custody path, authority, or deployment.
+`rust-toolchain.toml` pins the compiler; `Cargo.toml` declares Rust edition 2024
+and the minimum compiler. `Cargo.lock` and `.cargo/config.toml` keep Cargo
+resolution locked and offline. Toolchain installation requires network access;
+the subsequent Cargo commands do not. There are no dependencies to vendor.
+When dependencies are introduced, commit their lockfile entries and vendored
+sources with the corresponding Cargo source configuration.
+
+The [native build workflow](.github/workflows/rust-build.yml) checks both target
+architectures and records the actual compiler, OS, and native toolchain versions.
+The empty test harness runs zero behavioral tests. These checks prove buildability
+and repository policy, not minimum-OS support, a protocol, release, custody path,
+authority, or deployment.
 
 ## Project status
 
