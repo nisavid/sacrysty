@@ -8,7 +8,7 @@ authority, or permission to access a private deployment.
 ## Controlling records
 
 - [Provision the public Sacrysty repository](https://github.com/nisavid/dotfiles/issues/260)
-- [Sacrysty, Sacrystan, and `sacryd` naming amendment](https://github.com/nisavid/release-ops/issues/2#issuecomment-5565084063)
+- [Sacrysty, Sacrystan, and `sacryd` naming amendment](https://github.com/nisavid/codiquary/issues/2#issuecomment-5565084063)
 - [Reusable core, adapter, and adopter-profile boundary](https://github.com/nisavid/dotfiles/issues/207#issuecomment-5470521497)
 - [Dotfiles reference-adoption profile](https://github.com/nisavid/dotfiles/issues/217#issuecomment-5500795081)
 - [Operational delivery and first-adopter boundary](https://github.com/nisavid/dotfiles/issues/259#issuecomment-5532496281)
