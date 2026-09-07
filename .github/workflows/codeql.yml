@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      security-events: write
+      security-events: write # Required to upload CodeQL SARIF results.
     strategy:
       fail-fast: false
       matrix:
