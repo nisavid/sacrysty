@@ -26,6 +26,7 @@ jobs:
             arch: arm64
             target: aarch64-apple-darwin
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     defaults:
       run:
         shell: bash
@@ -45,7 +46,7 @@ jobs:
         run: |
           set -euo pipefail
           printf 'RUSTUP_HOME=%s\nCARGO_HOME=%s\n' "$RUSTUP_HOME" "$CARGO_HOME" >> "$GITHUB_ENV"
-          rustup toolchain install 1.98.1 --profile minimal --no-self-update
+          rustup toolchain install 1.98.1 --profile minimal --component clippy --component rustfmt --no-self-update
 
       - name: Record the native build environment
         run: |
@@ -65,8 +66,19 @@ jobs:
             cc --version
           fi
 
-      - name: Build the placeholder library offline
-        run: rustup run 1.98.1 cargo build --frozen --target "$BUILD_TARGET"
+      - name: Check formatting
+        run: rustup run 1.98.1 cargo fmt --all -- --check
 
-      - name: Run the placeholder test harness offline
-        run: rustup run 1.98.1 cargo test --frozen --target "$BUILD_TARGET"
+      - name: Lint all targets offline
+        run: rustup run 1.98.1 cargo clippy --frozen --all-targets --all-features --target "$BUILD_TARGET" -- -D warnings
+
+      - name: Build all targets offline
+        run: rustup run 1.98.1 cargo build --frozen --all-targets --all-features --target "$BUILD_TARGET"
+
+      - name: Run all tests offline
+        run: rustup run 1.98.1 cargo test --frozen --all-targets --all-features --target "$BUILD_TARGET"
+
+      - name: Check documentation offline
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: rustup run 1.98.1 cargo doc --frozen --no-deps --all-features --target "$BUILD_TARGET"
