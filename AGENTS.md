@@ -41,10 +41,10 @@ Ivan's dotfiles remain the first adopter and own those personal surfaces.
 
 ## Issue tracker
 
-The repository-native implementation map and its native sub-issues and
-dependency edges are the source of truth once published. Claim a Wayfinder
-ticket before working it. Refer to tickets by their linked titles in
-human-facing prose.
+The [implementation map](https://github.com/nisavid/sacrysty/issues/1), its
+native sub-issues, and its dependency edges are the source of truth. Claim a
+Wayfinder ticket before working it. Refer to tickets by their linked titles
+in human-facing prose.
 
 Use the canonical `needs-triage`, `needs-info`, `ready-for-agent`,
 `ready-for-human`, and `wontfix` labels. Wayfinder tickets use exactly one of

@@ -69,6 +69,9 @@ implementation, release, custody path, authority, or deployment.
 
 ## Project status
 
+Follow the [implementation map](https://github.com/nisavid/sacrysty/issues/1)
+for the current decisions, prerequisites, and route to the first public release.
+
 Every public interface is experimental before 1.0. Releases are need-driven.
 The project currently promises no release cadence, compatibility or deprecation
 window, backports, remediation deadline, platform-support term, or post-1.0
