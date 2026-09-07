@@ -9,12 +9,13 @@ human entrypoint and put detailed contracts and decisions under `docs/`.
 When introducing or revising domain concepts, follow the
 [shared domain naming convention](https://github.com/nisavid/dotfiles/blob/main/docs/research/CRYPTO_RELEASE_OPS_NAMING.md#domain-naming-convention).
 
-The repository is in a language-neutral genesis stage. Sacrysty is the project,
-Sacrystan is its public-facing operator, and `sacryd` (pronounced “sacred”) is
-the prospective command. Background workers and published bodies of practice
-remain unnamed. Do not select the implementation substrate, package or library
-coordinates, command grammar, schemas, authority semantics, custody model, or
-protocol implementation until their owning Wayfinder work settles them.
+The repository contains a non-operational Rust library build skeleton. The
+[substrate decision](https://github.com/nisavid/sacrysty/issues/2#issuecomment-5568558765)
+selects one root package/library named `sacrysty`. Sacrystan is the public-facing
+operator; add the prospective `sacryd` command (pronounced “sacred”) only when a
+concrete helper needs it. Background workers and published bodies of practice
+remain unnamed. Command grammar, schemas, authority semantics, custody model,
+and protocol implementation remain with their owning Wayfinder work.
 
 ## Ownership boundary
 

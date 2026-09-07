@@ -1,0 +1,72 @@
+name: Rust build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: rust-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Rust build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+            target: x86_64-unknown-linux-gnu
+          - runner: macos-15
+            arch: arm64
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      BUILD_ARCH: ${{ matrix.arch }}
+      BUILD_TARGET: ${{ matrix.target }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned build toolchain
+        env:
+          RUSTUP_HOME: ${{ runner.temp }}/sacrysty-rustup
+          CARGO_HOME: ${{ runner.temp }}/sacrysty-cargo
+        run: |
+          set -euo pipefail
+          printf 'RUSTUP_HOME=%s\nCARGO_HOME=%s\n' "$RUSTUP_HOME" "$CARGO_HOME" >> "$GITHUB_ENV"
+          rustup toolchain install 1.98.1 --profile minimal --no-self-update
+
+      - name: Record the native build environment
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "$BUILD_ARCH"
+          rustup run 1.98.1 rustc --version --verbose
+          rustup run 1.98.1 cargo --version --verbose
+          uname -a
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            cat /etc/os-release
+            ldd --version
+            cc --version
+          else
+            sw_vers
+            xcodebuild -version
+            xcrun --show-sdk-version
+            cc --version
+          fi
+
+      - name: Build the placeholder library offline
+        run: rustup run 1.98.1 cargo build --frozen --target "$BUILD_TARGET"
+
+      - name: Run the placeholder test harness offline
+        run: rustup run 1.98.1 cargo test --frozen --target "$BUILD_TARGET"
