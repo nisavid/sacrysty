@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sacrysty.nisavid.io/schemas/public-record-envelope/v1",
+  "title": "Sacrysty public record envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["record_type", "schema_version", "record_id", "publisher", "body"],
+  "properties": {
+    "record_type": {"type": "string", "enum": ["contract", "profile", "adapter", "qualification", "release"]},
+    "schema_version": {"const": "io.nisavid.sacrysty.public-record/v1"},
+    "record_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*:[a-z0-9][a-z0-9._/-]*$"},
+    "publisher": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$"},
+    "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "content_digest": {"type": "string", "pattern": "^sha512-[0-9a-f]{128}$"},
+    "body": {"type": "object"},
+    "extensions": {
+      "type": "object",
+      "propertyNames": {"pattern": "^[a-z0-9]+(?:\\.[a-z0-9-]+)+$"},
+      "additionalProperties": {"$ref": "#/$defs/extension"}
+    }
+  },
+  "$defs": {
+    "extension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "version", "criticality"],
+      "properties": {
+        "state": {"const": "inert"},
+        "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "criticality": {"enum": ["optional", "required"]},
+        "metadata": {"type": "object"}
+      }
+    }
+  }
+}
