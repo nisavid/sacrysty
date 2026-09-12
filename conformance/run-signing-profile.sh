@@ -38,34 +38,41 @@ common=(--cli-version 1.4.0 --home none --key-store none --cert-store none)
 "$sqv_bin" --time 20260910 --keyring "$cert" --signature-file "$sig" \
   "$message" >"$work/verify.log" 2>&1
 
+run_rejection() {
+  local status_file=$1
+  shift
+  set +e
+  "$@" >"${status_file}.stdout" 2>"${status_file}.stderr"
+  local status=$?
+  set -e
+  printf '%s' "$status" >"$status_file"
+  if [ "$status" -eq 0 ]; then
+    echo 'negative verification unexpectedly succeeded' >&2
+    exit 1
+  fi
+}
+
 cp "$message" "$tampered"
 printf 'tamper\n' >>"$tampered"
-if "$sqv_bin" --time 20260910 --keyring "$cert" --signature-file "$sig" \
-  "$tampered" >"$work/tampered-message.log" 2>&1; then
-  echo 'tampered message unexpectedly verified' >&2
-  exit 1
-fi
+run_rejection "$work/tampered-message.status" "$sqv_bin" --time 20260910 \
+  --keyring "$cert" --signature-file "$sig" "$tampered"
 cp "$sig" "$tampered_sig"
 printf 'tamper\n' >>"$tampered_sig"
-if "$sqv_bin" --time 20260910 --keyring "$cert" --signature-file "$tampered_sig" \
-  "$message" >"$work/tampered-signature.log" 2>&1; then
-  echo 'tampered signature unexpectedly verified' >&2
-  exit 1
-fi
+run_rejection "$work/tampered-signature.status" "$sqv_bin" --time 20260910 \
+  --keyring "$cert" --signature-file "$tampered_sig" "$message"
 
 "$sq_bin" "${common[@]}" --time 20260910 key generate --own-key \
   --userid 'Sacrysty Other Fixture <other@example.invalid>' --profile rfc9580 \
   --cipher-suite cv25519 --without-password --output "$wrong_key" \
   --rev-cert "$work/wrong-revocation.asc" >"$work/wrong-generate.log" 2>&1
 "$sq_bin" "${common[@]}" key delete --cert-file "$wrong_key" --output "$wrong_cert" >"$work/wrong-extract.log" 2>&1
-if "$sqv_bin" --time 20260910 --keyring "$wrong_cert" --signature-file "$sig" \
-  "$message" >"$work/wrong-certificate.log" 2>&1; then
-  echo 'signature unexpectedly verified with wrong certificate' >&2
-  exit 1
-fi
+run_rejection "$work/wrong-certificate.status" "$sqv_bin" --time 20260910 \
+  --keyring "$wrong_cert" --signature-file "$sig" "$message"
 
 sha256() { sha256sum "$1" | awk '{print $1}'; }
 sha512() { sha512sum "$1" | awk '{print $1}'; }
+json_escape() { sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr '\n' ' '; }
+redact_stderr() { sed "s|$work|<temporary>|g" "$1" | json_escape; }
 source_revision=$(git -C "$root" rev-parse HEAD)
 sq_version=$("$sq_bin" version 2>&1 | tr '\n' ' ' | sed 's/[[:space:]]*$//')
 sqv_version=$("$sqv_bin" --version)
@@ -75,6 +82,12 @@ message_sha256=$(sha256 "$message")
 message_sha512=$(sha512 "$message")
 signature_sha256=$(sha256 "$sig")
 signature_sha512=$(sha512 "$sig")
+tampered_message_status=$(cat "$work/tampered-message.status")
+tampered_message_stderr=$(redact_stderr "$work/tampered-message.status.stderr")
+tampered_signature_status=$(cat "$work/tampered-signature.status")
+tampered_signature_stderr=$(redact_stderr "$work/tampered-signature.status.stderr")
+wrong_certificate_status=$(cat "$work/wrong-certificate.status")
+wrong_certificate_stderr=$(redact_stderr "$work/wrong-certificate.status.stderr")
 cleanup_work
 trap - EXIT
 cleanup_verified=false
@@ -99,9 +112,9 @@ cat <<EOF_JSON
     "temporary_key_material_removed": $cleanup_verified
   },
   "diagnostics": {
-    "tampered_message": {"exit_status": "nonzero", "stderr": "captured-and-not-emitted"},
-    "tampered_signature": {"exit_status": "nonzero", "stderr": "captured-and-not-emitted"},
-    "wrong_certificate": {"exit_status": "nonzero", "stderr": "captured-and-not-emitted"}
+    "tampered_message": {"command": "sqv --time 20260910 --keyring signer-cert.pgp --signature-file message.sig tampered.bin", "exit_status": $tampered_message_status, "stderr": "$tampered_message_stderr"},
+    "tampered_signature": {"command": "sqv --time 20260910 --keyring signer-cert.pgp --signature-file tampered.sig message.bin", "exit_status": $tampered_signature_status, "stderr": "$tampered_signature_stderr"},
+    "wrong_certificate": {"command": "sqv --time 20260910 --keyring wrong-cert.pgp --signature-file message.sig message.bin", "exit_status": $wrong_certificate_status, "stderr": "$wrong_certificate_stderr"}
   },
   "production_values_policy": "forbidden",
   "rfc9980": "unsupported-capability-gated"
