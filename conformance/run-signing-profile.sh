@@ -89,7 +89,28 @@ sha512() {
     exit 1
   fi
 }
-json_escape() { sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr '\n' ' '; }
+json_escape() {
+  awk '
+  BEGIN {
+    first = 1
+    double_quote = sprintf("%c", 34)
+    tab = sprintf("%c", 9)
+    carriage_return = sprintf("%c", 13)
+    backspace = sprintf("%c", 8)
+    form_feed = sprintf("%c", 12)
+  }
+  {
+    if (!first) printf "\\n"
+    first = 0
+    gsub(/\\/, "\\\\")
+    gsub(double_quote, "\\\"")
+    gsub(tab, "\\t")
+    gsub(carriage_return, "\\r")
+    gsub(backspace, "\\b")
+    gsub(form_feed, "\\f")
+    printf "%s", $0
+  }'
+}
 redact_stderr() {
   local stderr
   stderr=$(cat "$1")
