@@ -90,7 +90,12 @@ sha512() {
   fi
 }
 json_escape() { sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr '\n' ' '; }
-redact_stderr() { sed "s|$work|<temporary>|g" "$1" | json_escape; }
+redact_stderr() {
+  local stderr
+  stderr=$(cat "$1")
+  stderr=${stderr//"$work"/<temporary>}
+  printf '%s' "$stderr" | json_escape
+}
 sqv_command=$(printf '%s' "$sqv_bin" | json_escape)
 source_revision=$(git -C "$root" rev-parse HEAD)
 sq_version=$("$sq_bin" version 2>&1 | tr '\n' ' ' | sed 's/[[:space:]]*$//' | json_escape)
