@@ -69,13 +69,31 @@ run_rejection "$work/tampered-signature.status" "$sqv_bin" --time 20260910 \
 run_rejection "$work/wrong-certificate.status" "$sqv_bin" --time 20260910 \
   --keyring "$wrong_cert" --signature-file "$sig" "$message"
 
-sha256() { sha256sum "$1" | awk '{print $1}'; }
-sha512() { sha512sum "$1" | awk '{print $1}'; }
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    echo 'no SHA-256 implementation available' >&2
+    exit 1
+  fi
+}
+sha512() {
+  if command -v sha512sum >/dev/null 2>&1; then
+    sha512sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 512 "$1" | awk '{print $1}'
+  else
+    echo 'no SHA-512 implementation available' >&2
+    exit 1
+  fi
+}
 json_escape() { sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr '\n' ' '; }
 redact_stderr() { sed "s|$work|<temporary>|g" "$1" | json_escape; }
 source_revision=$(git -C "$root" rev-parse HEAD)
-sq_version=$("$sq_bin" version 2>&1 | tr '\n' ' ' | sed 's/[[:space:]]*$//')
-sqv_version=$("$sqv_bin" --version)
+sq_version=$("$sq_bin" version 2>&1 | tr '\n' ' ' | sed 's/[[:space:]]*$//' | json_escape)
+sqv_version=$("$sqv_bin" --version | json_escape)
 message_bytes=$(wc -c <"$message" | tr -d ' ')
 signature_bytes=$(wc -c <"$sig" | tr -d ' ')
 message_sha256=$(sha256 "$message")
