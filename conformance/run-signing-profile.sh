@@ -91,6 +91,7 @@ sha512() {
 }
 json_escape() { sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr '\n' ' '; }
 redact_stderr() { sed "s|$work|<temporary>|g" "$1" | json_escape; }
+sqv_command=$(printf '%s' "$sqv_bin" | json_escape)
 source_revision=$(git -C "$root" rev-parse HEAD)
 sq_version=$("$sq_bin" version 2>&1 | tr '\n' ' ' | sed 's/[[:space:]]*$//' | json_escape)
 sqv_version=$("$sqv_bin" --version | json_escape)
@@ -130,9 +131,9 @@ cat <<EOF_JSON
     "temporary_key_material_removed": $cleanup_verified
   },
   "diagnostics": {
-    "tampered_message": {"command": "sqv --time 20260910 --keyring signer-cert.pgp --signature-file message.sig tampered.bin", "exit_status": $tampered_message_status, "stderr": "$tampered_message_stderr"},
-    "tampered_signature": {"command": "sqv --time 20260910 --keyring signer-cert.pgp --signature-file tampered.sig message.bin", "exit_status": $tampered_signature_status, "stderr": "$tampered_signature_stderr"},
-    "wrong_certificate": {"command": "sqv --time 20260910 --keyring wrong-cert.pgp --signature-file message.sig message.bin", "exit_status": $wrong_certificate_status, "stderr": "$wrong_certificate_stderr"}
+    "tampered_message": {"command": "$sqv_command --time 20260910 --keyring signer-cert.pgp --signature-file message.sig tampered.bin", "exit_status": $tampered_message_status, "stderr": "$tampered_message_stderr"},
+    "tampered_signature": {"command": "$sqv_command --time 20260910 --keyring signer-cert.pgp --signature-file tampered.sig message.bin", "exit_status": $tampered_signature_status, "stderr": "$tampered_signature_stderr"},
+    "wrong_certificate": {"command": "$sqv_command --time 20260910 --keyring wrong-cert.pgp --signature-file message.sig message.bin", "exit_status": $wrong_certificate_status, "stderr": "$wrong_certificate_stderr"}
   },
   "production_values_policy": "forbidden",
   "rfc9980": "unsupported-capability-gated"
