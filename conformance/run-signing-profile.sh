@@ -15,7 +15,8 @@ if [ -n "$(git -C "$root" status --porcelain)" ]; then
 fi
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/sacrysty-signing-profile.XXXXXX")
-trap 'rm -rf "$work"' EXIT
+cleanup_work() { rm -rf "$work"; }
+trap cleanup_work EXIT
 message="$work/message.bin"
 key="$work/signing-key.pgp"
 cert="$work/signer-cert.pgp"
@@ -68,6 +69,16 @@ sha512() { sha512sum "$1" | awk '{print $1}'; }
 source_revision=$(git -C "$root" rev-parse HEAD)
 sq_version=$("$sq_bin" version 2>&1 | tr '\n' ' ' | sed 's/[[:space:]]*$//')
 sqv_version=$("$sqv_bin" --version)
+message_bytes=$(wc -c <"$message" | tr -d ' ')
+signature_bytes=$(wc -c <"$sig" | tr -d ' ')
+message_sha256=$(sha256 "$message")
+message_sha512=$(sha512 "$message")
+signature_sha256=$(sha256 "$sig")
+signature_sha512=$(sha512 "$sig")
+cleanup_work
+trap - EXIT
+cleanup_verified=false
+[ ! -e "$work" ] && cleanup_verified=true
 cat <<EOF_JSON
 {
   "schema": "io.nisavid.sacrysty.signing-profile-result/v1",
@@ -77,17 +88,22 @@ cat <<EOF_JSON
   "sqv_version": "$sqv_version",
   "profile": "openpgp-rfc9580-classical-v1",
   "fixtures": {
-    "message": {"bytes": $(wc -c <"$message" | tr -d ' '), "sha256": "$(sha256 "$message")", "sha512": "$(sha512 "$message")"},
-    "signature": {"bytes": $(wc -c <"$sig" | tr -d ' '), "sha256": "$(sha256 "$sig")", "sha512": "$(sha512 "$sig")"}
+    "message": {"bytes": $message_bytes, "sha256": "$message_sha256", "sha512": "$message_sha512"},
+    "signature": {"bytes": $signature_bytes, "sha256": "$signature_sha256", "sha512": "$signature_sha512"}
   },
   "checks": {
     "detached_sign_verify": true,
     "tampered_message_rejected": true,
     "tampered_signature_rejected": true,
     "wrong_certificate_rejected": true,
-    "temporary_key_material": true,
-    "production_values": false
+    "temporary_key_material_removed": $cleanup_verified
   },
+  "diagnostics": {
+    "tampered_message": {"exit_status": "nonzero", "stderr": "captured-and-not-emitted"},
+    "tampered_signature": {"exit_status": "nonzero", "stderr": "captured-and-not-emitted"},
+    "wrong_certificate": {"exit_status": "nonzero", "stderr": "captured-and-not-emitted"}
+  },
+  "production_values_policy": "forbidden",
   "rfc9980": "unsupported-capability-gated"
 }
 EOF_JSON

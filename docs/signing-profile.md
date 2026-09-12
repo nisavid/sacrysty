@@ -7,7 +7,9 @@ separately. The executable evidence is `conformance/run-signing-profile.sh`.
 
 A valid result means the verifier accepted the exact payload bytes with the
 supplied certificate. Changed payload bytes, a changed signature, or a
-certificate that does not match must produce a failure diagnostic. The helper
+certificate that does not match must produce a failure diagnostic from `sqv`;
+callers retain the command, exit status, and stderr without exposing secret
+bytes. The helper
 disables default personal stores, uses disposable temporary files, and deletes them on exit.
 
 The current qualification is limited to RFC 9580 on the observed runtime. RFC

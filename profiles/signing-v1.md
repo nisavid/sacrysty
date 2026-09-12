@@ -17,8 +17,8 @@ supported algorithm in this profile; advertised tool help is insufficient.
 Canonical invocation:
 
 ```sh
-sq sign --binary --signature-file message.sig --signer-file signing-key.pgp message.bin
-sqv --keyring=signer-cert.pgp --signature-file message.sig message.bin
+sq --cli-version 1.4.0 --home none --key-store none --cert-store none --time 20260910 sign --binary --signature-file message.sig --signer-file signing-key.pgp message.bin
+sqv --time 20260910 --keyring=signer-cert.pgp --signature-file message.sig message.bin
 ```
 
 The helper must use temporary value-free fixtures, never default personal key
