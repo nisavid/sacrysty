@@ -5,8 +5,9 @@ cryptographic-operations product. Its public-facing operator is Sacrystan, and
 its prospective command is `sacryd`, pronounced “sacred.”
 
 > [!IMPORTANT]
-> This repository contains a non-operational Rust library build skeleton, with
-> no executable or public API. It has no cryptographic-operations implementation,
+> This repository contains a non-operational Rust library build skeleton and a
+> value-free Python reference adapter. It has no Rust executable or public API,
+> cryptographic-operations implementation,
 > qualified runtime, protocol, schema, production authority, custody binding,
 > key, credential, provider binding, trusted deployment, or release.
 
