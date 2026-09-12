@@ -9,7 +9,7 @@ sqv_bin=${SQV:-sqv}
 command -v "$sq_bin" >/dev/null
 command -v "$sqv_bin" >/dev/null
 
-if ! git -C "$root" diff --quiet || ! git -C "$root" diff --cached --quiet; then
+if [ -n "$(git -C "$root" status --porcelain)" ]; then
   echo 'signing-profile evidence requires a clean worktree' >&2
   exit 1
 fi
