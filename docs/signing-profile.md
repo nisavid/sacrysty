@@ -8,7 +8,7 @@ separately. The executable evidence is `conformance/run-signing-profile.sh`.
 A valid result means the verifier accepted the exact payload bytes with the
 supplied certificate. Changed payload bytes, a changed signature, or a
 certificate that does not match must produce a failure diagnostic. The helper
-uses an isolated temporary home and deletes it on exit.
+disables default personal stores, uses disposable temporary files, and deletes them on exit.
 
 The current qualification is limited to RFC 9580 on the observed runtime. RFC
 9980 / ML-DSA remains unsupported and capability-gated pending independent
