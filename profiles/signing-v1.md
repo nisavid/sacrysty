@@ -2,7 +2,9 @@
 
 This profile defines value-free detached OpenPGP signing and verification using
 standard Sequoia tools. It is the reusable successor to the generic signing
-portion of dotfiles #161.
+portion of dotfiles #161. Issue #13 is the owning decision for this public
+profile contract; this document is its normative statement of inputs, outputs,
+failure behavior, and supported algorithm boundary.
 
 Inputs are a byte sequence, an explicitly selected signing key, and a public
 certificate supplied to verification. Outputs are a detached OpenPGP signature
