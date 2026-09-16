@@ -28,13 +28,18 @@ Historical evidence remains unchanged.
 
 ## Current stage
 
-The repository contains governance and a non-operational Rust library build
-skeleton. The
+The repository contains governance, a non-operational Rust library, public-record
+envelope source, disposable crypto-tool probes, a signing profile, and a
+synthetic Python custody adapter. The
 [substrate decision](https://github.com/nisavid/sacrysty/issues/2#issuecomment-5568558765)
 selects one root Cargo package/library named `sacrysty`; `src/lib.rs` is empty
 apart from its documentation. There is no executable or public API. Add `sacryd`
 only when a concrete helper needs it; documentation does not depend on a CLI.
 
-Command grammar, schemas, authority semantics, custody model, and protocol
-implementation remain unsettled. No cryptographic-operations implementation,
-released package, private binding, or production state exists here.
+The public domain model defines the record envelope and inert extensions.
+Record-family schemas, command grammar, authority semantics, custody, and
+protocol behavior remain with their owning decisions. The conformance probes
+exercise only disposable inputs, and the adapter exercises synthetic workers.
+Genesis acceptance, hardware qualification, release publication, and private
+adoption remain separate. No released package, private binding, or production
+state exists here.

@@ -1,0 +1,10 @@
+{
+  "record_type": "contract",
+  "schema_version": "io.nisavid.sacrysty.public-record/v1",
+  "record_id": "io.nisavid.sacrysty.contract:unsupported-required-extension",
+  "publisher": "io.nisavid.sacrysty",
+  "body": {"name": "hostile"},
+  "extensions": {
+    "example.invalid.future": {"state": "inert", "version": "2.0.0", "criticality": "required"}
+  }
+}

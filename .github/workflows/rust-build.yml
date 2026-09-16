@@ -82,3 +82,6 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: rustup run 1.98.1 cargo doc --frozen --no-deps --all-features --target "$BUILD_TARGET"
+
+      - name: Check public records and synthetic custody
+        run: ./scripts/check-conformance.sh --synthetic-only

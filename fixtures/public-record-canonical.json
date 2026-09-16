@@ -1,0 +1,12 @@
+{
+  "record_type": "contract",
+  "schema_version": "io.nisavid.sacrysty.public-record/v1",
+  "record_id": "io.nisavid.sacrysty.contract:domain-model",
+  "publisher": "io.nisavid.sacrysty",
+  "version": "0.1.0",
+  "content_digest": "sha512-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "body": {"name": "public-domain-model", "compatibility": "experimental-before-1.0"},
+  "extensions": {
+    "example.invalid.audit": {"state": "inert", "version": "1.0.0", "criticality": "optional", "metadata": {"fixture": "value-free"}}
+  }
+}
