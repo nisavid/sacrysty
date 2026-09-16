@@ -58,6 +58,16 @@ jobs:
           path: frozen-synthetic-source
           persist-credentials: false
 
+      - name: Exercise candidate-bound runner behavior
+        shell: bash
+        env:
+          TEST_TMPDIR: ${{ runner.temp }}/sacrysty-fido-qualification/${{ matrix.id }}/tests
+        run: |
+          set -euo pipefail
+          mkdir -p "$TEST_TMPDIR"
+          bash "$IMPLEMENTATION_ROOT/qualification/fido-custody/test-run-synthetic-ci.sh" \
+            "$SOURCE_ROOT"
+
       - name: Run candidate-bound direct synthetic checks
         shell: bash
         env:
