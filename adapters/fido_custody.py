@@ -111,13 +111,18 @@ def _terminate_and_reap(process: subprocess.Popen[bytes]) -> None:
         os.killpg(process.pid, signal.SIGKILL)
     except OSError as exc:
         if exc.errno != errno.ESRCH:
-            group_cleanup_error = exc
-            # A leader-only fallback cannot establish descendant cleanup. Try it
-            # for bounded cleanup, but retain the group failure for the caller.
             try:
-                process.kill()
-            except OSError:
-                pass
+                leader_exited = _leader_exited_unreaped(process)
+            except _WorkerOwnershipLost as ownership_error:
+                raise CustodyError("worker ownership lost") from ownership_error
+            if exc.errno != errno.EPERM or not leader_exited:
+                group_cleanup_error = exc
+                # A leader-only fallback cannot establish descendant cleanup.
+                # Try it boundedly, but retain the group failure for the caller.
+                try:
+                    process.kill()
+                except OSError:
+                    pass
 
     for pipe in (process.stdin, process.stdout, process.stderr):
         if pipe is not None:
@@ -138,6 +143,8 @@ def _terminate_and_reap(process: subprocess.Popen[bytes]) -> None:
     if group_cleanup_error is not None:
         raise CustodyError("worker cleanup failure") from group_cleanup_error
 
+    # After leader reaping, only definitive group absence completes cleanup.
+    # This also resolves a denied signal without treating denial as absence.
     deadline = time.monotonic() + 0.5
     last_permission_denial: PermissionError | None = None
     while True:

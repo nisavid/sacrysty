@@ -189,21 +189,38 @@ def _reap_leader_after_group_failure(
 
 def _signal_group_or_reap_leader(
     process: subprocess.Popen[bytes], selected_signal: signal.Signals
-) -> None:
+) -> bool:
     try:
         _signal_group(process.pid, selected_signal)
     except ProcessBoundaryError as group_cleanup_error:
+        if _is_permission_denial(group_cleanup_error) and _leader_exited_unreaped(
+            process
+        ):
+            # Reaping ends numeric group ownership. Only bounded signal-zero
+            # absence checks are permitted after this wait.
+            try:
+                process.wait(timeout=KILL_GRACE_SECONDS)
+            except subprocess.TimeoutExpired as exc:
+                raise ProcessBoundaryError(
+                    "process leader cleanup timed out after group signal denial"
+                ) from exc
+            if not _wait_for_group_exit(process.pid, KILL_GRACE_SECONDS):
+                raise ProcessBoundaryError("process-group cleanup timed out")
+            return False
         _reap_leader_after_group_failure(process, group_cleanup_error)
+    return True
 
 
 def _terminate_and_reap(
     process: subprocess.Popen[bytes], limits: ProcessLimits
 ) -> None:
     leader_already_exited = _leader_exited_unreaped(process)
-    _signal_group_or_reap_leader(process, signal.SIGTERM)
+    if not _signal_group_or_reap_leader(process, signal.SIGTERM):
+        return
     if not leader_already_exited:
         _wait_for_cleanup_grace(limits.terminate_grace_seconds)
-    _signal_group_or_reap_leader(process, signal.SIGKILL)
+    if not _signal_group_or_reap_leader(process, signal.SIGKILL):
+        return
     try:
         process.wait(timeout=KILL_GRACE_SECONDS)
     except subprocess.TimeoutExpired:
@@ -406,6 +423,7 @@ def run_process(
         if (
             process is not None
             and not cleanup_complete
+            and process.returncode is None
             and not isinstance(original_error, _ProcessOwnershipLost)
         ):
             try:

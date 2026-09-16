@@ -492,6 +492,62 @@ def check_cleanup_signals_only_owned_process_group(
     )
 
 
+def check_nonzero_group_signal_denial_requires_definitive_absence(
+    command: list[str], environment: dict[str, str]
+) -> None:
+    call_observations: list[tuple[int, bool]] = []
+    definitive_absence_observed = False
+    real_killpg = fido_custody.os.killpg
+
+    def deny_owned_group_signal(process_group: int, requested_signal: int) -> None:
+        nonlocal definitive_absence_observed
+        try:
+            os.waitid(
+                os.P_PID,
+                process_group,
+                os.WEXITED | os.WNOHANG | os.WNOWAIT,
+            )
+        except ChildProcessError:
+            leader_is_owned = False
+        else:
+            leader_is_owned = True
+        call_observations.append((requested_signal, leader_is_owned))
+        if requested_signal != 0:
+            raise PermissionError(
+                errno.EPERM, "constructed nonzero process-group signal denial"
+            )
+        try:
+            real_killpg(process_group, requested_signal)
+        except ProcessLookupError:
+            definitive_absence_observed = True
+            raise
+
+    try:
+        # Construct only the observed nonzero-signal denial at the cleanup
+        # syscall seam. The real child wait and signal-zero probe independently
+        # establish whether the disposable process group is then absent.
+        fido_custody.os.killpg = deny_owned_group_signal
+        result = OneShotCustodyAdapter(command, environment=environment).unwrap(
+            request_for()
+        )
+    finally:
+        fido_custody.os.killpg = real_killpg
+    require(
+        result.plaintext == b"synthetic plaintext canary",
+        "nonzero group-signal denial discarded an ordinarily completed worker result",
+    )
+    require(
+        call_observations[0] == (signal.SIGKILL, True)
+        and len(call_observations) > 1
+        and all(
+            requested_signal == 0 and not leader_is_owned
+            for requested_signal, leader_is_owned in call_observations[1:]
+        )
+        and definitive_absence_observed,
+        "adapter did not require definitive absence without signalling after reaping",
+    )
+
+
 def check_adapter_group_probe_denial_requires_absence(
     command: list[str], environment: dict[str, str]
 ) -> None:
@@ -560,6 +616,9 @@ def main() -> None:
         adapter = OneShotCustodyAdapter(command, environment=environment)
         check_startup_interruption_owns_worker(command, environment)
         check_cleanup_signals_only_owned_process_group(command, environment)
+        check_nonzero_group_signal_denial_requires_definitive_absence(
+            command, environment
+        )
         check_adapter_group_probe_denial_requires_absence(command, environment)
         result = adapter.unwrap(request)
         require(
@@ -710,7 +769,7 @@ def main() -> None:
 
         cleanup_denied_marker = pathlib.Path(directory) / "cleanup-denied-child-pid"
         denied_process_group: int | None = None
-        cleanup_denial_calls: list[tuple[int, int]] = []
+        cleanup_denial_calls: list[tuple[int, int, bool]] = []
         real_killpg = os.killpg
 
         def constructed_group_cleanup_denial(
@@ -718,13 +777,27 @@ def main() -> None:
         ) -> None:
             nonlocal denied_process_group
             denied_process_group = process_group
-            cleanup_denial_calls.append((process_group, requested_signal))
+            try:
+                os.waitid(
+                    os.P_PID,
+                    process_group,
+                    os.WEXITED | os.WNOHANG | os.WNOWAIT,
+                )
+            except ChildProcessError:
+                leader_is_owned = False
+            else:
+                leader_is_owned = True
+            cleanup_denial_calls.append(
+                (process_group, requested_signal, leader_is_owned)
+            )
             raise PermissionError(
                 errno.EPERM, "constructed process-group cleanup denial"
             )
 
         cleanup_denied_child: int | None = None
         cleanup_denied_child_group: int | None = None
+        cleanup_denial_elapsed: float | None = None
+        cleanup_denial_started = time.monotonic()
         try:
             # Constructed evidence: inject EPERM only at the adapter's killpg
             # boundary. The saved syscall and PID marker provide an independent
@@ -735,6 +808,7 @@ def main() -> None:
                 request_for("cleanup-denied"),
                 "worker cleanup failure",
             )
+            cleanup_denial_elapsed = time.monotonic() - cleanup_denial_started
         finally:
             fido_custody.os.killpg = real_killpg
             if cleanup_denied_marker.is_file():
@@ -760,8 +834,21 @@ def main() -> None:
             if denied_process_group is not None:
                 wait_for_process_group_exit(denied_process_group, timeout_seconds=2.0)
         require(
-            cleanup_denial_calls == [(denied_process_group, signal.SIGKILL)],
-            "constructed cleanup denial did not replace one group-kill attempt",
+            cleanup_denial_calls[0] == (denied_process_group, signal.SIGKILL, True)
+            and len(cleanup_denial_calls) > 1
+            and all(
+                process_group == denied_process_group
+                and requested_signal == 0
+                and not leader_is_owned
+                for process_group, requested_signal, leader_is_owned in cleanup_denial_calls[
+                    1:
+                ]
+            ),
+            "persistent cleanup denial escaped its ownership-safe failure boundary",
+        )
+        require(
+            cleanup_denial_elapsed is not None and cleanup_denial_elapsed < 1.5,
+            "persistent cleanup denial was not bounded",
         )
         require(
             cleanup_denied_child_group == denied_process_group,

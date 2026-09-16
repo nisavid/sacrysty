@@ -386,6 +386,172 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 "cleanup reached a process group after its leader was reaped",
             )
 
+    def test_nonzero_group_signal_denial_requires_definitive_absence(self) -> None:
+        with external_temporary_directory(
+            ROOT, prefix="sacrysty-process-nonzero-eperm-test-"
+        ) as directory:
+            root = pathlib.Path(directory)
+            script = root / "exit.py"
+            script.write_text("raise SystemExit(0)\n")
+            outputs = self.make_paths(directory)
+            call_observations: list[tuple[int, bool]] = []
+            definitive_absence_observed = False
+            real_killpg = os.killpg
+
+            def deny_owned_group_signal(
+                process_group: int, requested_signal: int
+            ) -> None:
+                nonlocal definitive_absence_observed
+                try:
+                    os.waitid(
+                        os.P_PID,
+                        process_group,
+                        os.WEXITED | os.WNOHANG | os.WNOWAIT,
+                    )
+                except ChildProcessError:
+                    leader_is_owned = False
+                else:
+                    leader_is_owned = True
+                call_observations.append((requested_signal, leader_is_owned))
+                if requested_signal != 0:
+                    raise PermissionError(
+                        errno.EPERM,
+                        "constructed nonzero process-group signal denial",
+                    )
+                try:
+                    real_killpg(process_group, requested_signal)
+                except ProcessLookupError:
+                    definitive_absence_observed = True
+                    raise
+
+            # Construct only the observed nonzero-signal denial at the helper's
+            # cleanup syscall seam. The real wait and signal-zero probe determine
+            # whether the disposable process group is then absent.
+            with mock.patch.object(
+                process_boundary.os, "killpg", deny_owned_group_signal
+            ):
+                child_status = process_boundary.run_process(
+                    "tool", outputs, [sys.executable, str(script)]
+                )
+
+            self.assertEqual(child_status, 0)
+            self.assertEqual(outputs.status.read_text(), "0\n")
+            self.assertEqual(call_observations[0], (signal.SIGTERM, True))
+            self.assertGreater(len(call_observations), 1)
+            self.assertTrue(
+                all(
+                    requested_signal == 0 and not leader_is_owned
+                    for requested_signal, leader_is_owned in call_observations[1:]
+                ),
+                "helper signalled after reaping the owned leader",
+            )
+            self.assertTrue(definitive_absence_observed)
+
+    def test_nonzero_group_signal_persistent_denial_fails_boundedly(self) -> None:
+        with external_temporary_directory(
+            ROOT, prefix="sacrysty-process-nonzero-eperm-persistent-test-"
+        ) as directory:
+            root = pathlib.Path(directory)
+            child_pid_path = root / "child-pid"
+            child_program = (
+                "import os, pathlib, time\n"
+                f"pathlib.Path({str(child_pid_path)!r})"
+                ".write_text(f'{os.getpid()}:{os.getpgrp()}')\n"
+                "while True:\n"
+                "    time.sleep(1)\n"
+            )
+            script = root / "spawn-child.py"
+            script.write_text(
+                "import os, pathlib, subprocess, sys, time\n"
+                "child = subprocess.Popen(\n"
+                f"    [sys.executable, '-c', {child_program!r}],\n"
+                "    stdin=subprocess.DEVNULL,\n"
+                "    stdout=subprocess.DEVNULL,\n"
+                "    stderr=subprocess.DEVNULL,\n"
+                ")\n"
+                f"marker = pathlib.Path({str(child_pid_path)!r})\n"
+                "deadline = time.monotonic() + 2\n"
+                "while not marker.is_file() and time.monotonic() < deadline:\n"
+                "    if child.poll() is not None:\n"
+                "        break\n"
+                "    time.sleep(0.01)\n"
+                "if not marker.is_file() or os.getpgid(child.pid) != os.getpgrp():\n"
+                "    child.kill()\n"
+                "    child.wait()\n"
+                "    raise SystemExit(20)\n"
+            )
+            outputs = self.make_paths(directory)
+            call_observations: list[tuple[int, bool]] = []
+            real_killpg = os.killpg
+
+            def deny_signals_and_checks(
+                process_group: int, requested_signal: int
+            ) -> None:
+                try:
+                    os.waitid(
+                        os.P_PID,
+                        process_group,
+                        os.WEXITED | os.WNOHANG | os.WNOWAIT,
+                    )
+                except ChildProcessError:
+                    leader_is_owned = False
+                else:
+                    leader_is_owned = True
+                call_observations.append((requested_signal, leader_is_owned))
+                if requested_signal == 0:
+                    real_killpg(process_group, 0)
+                    raise PermissionError(
+                        errno.EPERM,
+                        "constructed persistent process-group denial",
+                    )
+                raise PermissionError(
+                    errno.EPERM,
+                    "constructed nonzero process-group signal denial",
+                )
+
+            child_pid: int | None = None
+            child_group: int | None = None
+            started = time.monotonic()
+            try:
+                with (
+                    mock.patch.object(process_boundary, "KILL_GRACE_SECONDS", 0.05),
+                    mock.patch.object(
+                        process_boundary.os, "killpg", deny_signals_and_checks
+                    ),
+                    self.assertRaisesRegex(
+                        process_boundary.ProcessBoundaryError,
+                        r"process-group cleanup check failed \(EPERM\)",
+                    ),
+                ):
+                    process_boundary.run_process(
+                        "tool", outputs, [sys.executable, str(script)]
+                    )
+            finally:
+                elapsed = time.monotonic() - started
+                if child_pid_path.is_file():
+                    child_pid, child_group = map(
+                        int, child_pid_path.read_text().split(":")
+                    )
+                    if child_group != os.getpgrp():
+                        _terminate_group_if_alive(child_group)
+                    else:
+                        _terminate_if_alive(child_pid)
+            self.assertLess(elapsed, 1.0)
+            self.assertIsNotNone(child_pid)
+            self.assertIsNotNone(child_group)
+            self.assertNotEqual(child_group, os.getpgrp())
+            self.assertEqual(call_observations[0], (signal.SIGTERM, True))
+            self.assertGreater(len(call_observations), 1)
+            self.assertTrue(
+                all(
+                    requested_signal == 0 and not leader_is_owned
+                    for requested_signal, leader_is_owned in call_observations[1:]
+                ),
+                "helper signalled after reaping under persistent denial",
+            )
+            self.assert_process_gone(int(child_pid))
+            self.assertFalse(outputs.status.exists())
+
     def test_transient_eperm_check_requires_eventual_group_absence(self) -> None:
         with external_temporary_directory(
             ROOT, prefix="sacrysty-process-group-eperm-test-"
