@@ -24,11 +24,11 @@ Each check is also available separately:
 | `python3 conformance/test-run-sq.py` | Crypto-probe source binding, portability, JSON, and cleanup | Constructed tool responses; no cryptographic capability claim. |
 | `./conformance/run-signing-profile.sh` | Detached signatures and rejection diagnostics | The signing-profile fixture; no release-signing authority. |
 | `python3 conformance/test-run-signing-profile.py` | Signing-runner source, store, JSON, verification, rejection, and cleanup controls | Constructed tool responses; no cryptographic capability claim. |
-| `python3 conformance/test-sq-evidence-process.py` | Process bounds shared by the probe runners and aggregate | Constructed timeout, output, file-growth, exit-status, and ordinary same-process-group cases. |
+| `python3 conformance/test-sq-evidence-process.py` | Process bounds shared by the probe runners and aggregate | Constructed timeout, output, file-growth, exit-status, interruption, cleanup-denial, and ordinary same-process-group cases. |
 | `python3 conformance/check-fido-custody.py` | Synthetic one-shot custody workers | Success and failure paths; no authenticator, plugin, native-library, or production qualification. |
 | `python3 conformance/check-source-inventory.py` | Producer commits and every inventoried source path | Complete Git object history, ancestry, tree membership, modes, blobs, byte lengths, and hashes; no hosted availability or review claim. |
 | `python3 conformance/check-probe-result.py <crypto-conformance\|signing-profile> <result.json> <revision>` | Captured crypto-probe JSON | Required result identity, source binding, profile result, diagnostics, and mandatory check values; no qualification beyond the admitted observation. |
-| `python3 conformance/test-check-conformance.py` | Aggregate runner and admission order | Constructed runner results, statuses, size limits, and ordinary same-process-group cleanup. |
+| `python3 conformance/test-check-conformance.py` | Aggregate runner and admission order | Constructed runner results, statuses, size limits, cancellation with a nested selected session, and ordinary same-process-group cleanup. |
 
 The crypto probes generate disposable key material in temporary directories
 and disable default key and certificate stores. Every selected `sq` or `sqv`
@@ -39,6 +39,8 @@ internal limits have no configuration surface.
 
 The process helper starts each selected process in a new process group and
 terminates and reaps ordinary descendants in that group before returning.
+The aggregate forwards caller interruption to its active probe helper and
+waits for the nested selected-tool helper to finish its bounded cleanup attempt.
 Timeout, output overflow, file-growth failure, or cleanup failure fails the
 probe; none is an unsupported or positive observation. A process group is not
 a sandbox, and these bounds do not claim to contain a process that deliberately

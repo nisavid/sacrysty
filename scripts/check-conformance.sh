@@ -30,6 +30,29 @@ cleanup_results() {
 }
 trap cleanup_results EXIT
 
+active_probe_supervisor=
+aggregate_interrupted_status=
+aggregate_signal_failure=
+interrupt_aggregate() {
+  local interrupted_status=$1
+  if [[ -n $aggregate_interrupted_status ]]; then
+    return
+  fi
+  aggregate_interrupted_status=$interrupted_status
+  if [[ -z $active_probe_supervisor ]]; then
+    trap - INT TERM
+    exit "$aggregate_interrupted_status"
+  fi
+  # Bash starts the asynchronous helper with SIGINT ignored. Use the helper's
+  # handled termination signal for both caller interruption paths.
+  if ! kill -s TERM "$active_probe_supervisor"; then
+    printf 'aggregate could not signal its active probe supervisor\n' >&2
+    aggregate_signal_failure=1
+  fi
+}
+trap 'interrupt_aggregate 130' INT
+trap 'interrupt_aggregate 143' TERM
+
 printf 'source_revision=%s\n' "$source_revision"
 ./scripts/check-repository.sh
 git diff --check
@@ -63,15 +86,32 @@ run_and_admit_probe() {
   local runner_stderr="${output}.stderr"
   local runner_status_file="${output}.status"
   local runner_status
-  if ! sq_evidence_run_probe \
-    "$runner_status_file" "$output" "$runner_stderr" "$runner"; then
-    if [[ -s $runner_stderr ]]; then
-      cat "$runner_stderr" >&2
-    fi
-    return 1
+  local supervisor_status
+  python3 -B "$SQ_EVIDENCE_PROCESS_HELPER" \
+    probe "$runner_status_file" "$output" "$runner_stderr" -- "$runner" &
+  active_probe_supervisor=$!
+  if wait "$active_probe_supervisor"; then
+    supervisor_status=0
+  else
+    supervisor_status=$?
   fi
+  if [[ -n $aggregate_interrupted_status ]]; then
+    # A trapped signal interrupts wait before the helper necessarily exits.
+    # Re-wait so its process-group and nested-session cleanup completes first.
+    wait "$active_probe_supervisor" || :
+  fi
+  active_probe_supervisor=
   if [[ -s $runner_stderr ]]; then
     cat "$runner_stderr" >&2
+  fi
+  if [[ -n $aggregate_signal_failure ]]; then
+    return 1
+  fi
+  if [[ -n $aggregate_interrupted_status ]]; then
+    return "$aggregate_interrupted_status"
+  fi
+  if (( supervisor_status != 0 )); then
+    return 1
   fi
   runner_status=$(sq_evidence_read_status "$runner_status_file")
   if [[ $runner_status -ne 0 ]]; then
