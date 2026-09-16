@@ -48,8 +48,8 @@ main() {
   local script_path script_directory implementation_root
   local observed_source_revision source_status_before observed_arch
   local implementation_revision workflow_file workflow_file_digest
-  local workflow_revision workflow_ref result_parent
-  local resolved_result_parent resolved_source_root
+  local workflow_revision workflow_ref result_parent result_name
+  local resolved_result_parent resolved_result_file resolved_source_root
   local normal_exit optimized_exit source_status_after clean_after
 
   script_path=$(realpath -- "${BASH_SOURCE[0]}")
@@ -127,8 +127,14 @@ main() {
   else
     result_parent=.
   fi
+  result_name=${result_file##*/}
+  if [[ -z $result_name || $result_name == . || $result_name == .. ]]; then
+    printf 'result file must name a file within its parent directory\n' >&2
+    exit 1
+  fi
   mkdir -p "$result_parent"
   resolved_result_parent=$(cd "$result_parent" && pwd -P)
+  resolved_result_file="$resolved_result_parent/$result_name"
   resolved_source_root=$(cd "$source_root" && pwd -P)
   if [[ $resolved_result_parent == "$resolved_source_root" ||
     $resolved_result_parent == "$resolved_source_root"/* ]]; then
@@ -152,7 +158,7 @@ main() {
   fi
 
   python3 -B - \
-    "$result_file" \
+    "$resolved_result_file" \
     "$workflow_revision" \
     "$workflow_ref" \
     "$workflow_file_digest" \
@@ -171,6 +177,7 @@ import os
 import pathlib
 import platform
 import sys
+import tempfile
 
 (
     result_file,
@@ -256,9 +263,23 @@ record = {
         "A relevant source, workflow, runtime, platform, architecture, or runner-image change invalidates this result.",
     ],
 }
-pathlib.Path(result_file).write_text(
-    json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-)
+result_path = pathlib.Path(result_file)
+temporary_path = None
+try:
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=result_path.parent,
+        prefix=".fido-qualification-result.",
+        delete=False,
+    ) as temporary_file:
+        temporary_path = pathlib.Path(temporary_file.name)
+        temporary_file.write(json.dumps(record, indent=2, sort_keys=True) + "\n")
+    os.replace(temporary_path, result_path)
+    temporary_path = None
+finally:
+    if temporary_path is not None:
+        temporary_path.unlink(missing_ok=True)
 PY
 
   printf 'candidate-bound provisional result: %s\n' "$result_file"

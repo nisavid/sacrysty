@@ -65,6 +65,58 @@ test_imported_dependency_digest_rejection() {
   fi
 }
 
+test_result_links_do_not_mutate_source() {
+  local controlled_source="$scratch_directory/linked-result-source"
+  local result_directory="$scratch_directory/linked-result-output"
+  local disposable_root="$scratch_directory/linked-result-tmp"
+  local symlink_result="$result_directory/symlink-result.json"
+  local symlink_target="$controlled_source/conformance/strict_json.py"
+  local hardlink_result="$result_directory/hardlink-result.json"
+  local hardlink_target="$controlled_source/conformance/test_support.py"
+
+  mkdir "$controlled_source" "$result_directory" "$disposable_root"
+  cp -R "$source_root/." "$controlled_source"
+
+  ln -s "$symlink_target" "$symlink_result"
+  TMPDIR="$disposable_root" \
+    bash "$runner" "$controlled_source" "$symlink_result" "$(uname -m)"
+  if [[ -L $symlink_result ]]; then
+    printf 'result writing followed an existing symlink\n' >&2
+    return 1
+  fi
+  if ! cmp -s "$source_root/conformance/strict_json.py" "$symlink_target"; then
+    printf 'result writing modified a symlinked source file\n' >&2
+    return 1
+  fi
+
+  ln "$hardlink_target" "$hardlink_result"
+  TMPDIR="$disposable_root" \
+    bash "$runner" "$controlled_source" "$hardlink_result" "$(uname -m)"
+  if [[ $hardlink_result -ef $hardlink_target ]]; then
+    printf 'result writing retained a hard link to a source file\n' >&2
+    return 1
+  fi
+  if ! cmp -s "$source_root/conformance/test_support.py" "$hardlink_target"; then
+    printf 'result writing modified a hard-linked source file\n' >&2
+    return 1
+  fi
+  if [[ -n $(git -C "$controlled_source" status --porcelain=v1 --untracked-files=all) ]]; then
+    printf 'linked result writing left the controlled source dirty\n' >&2
+    return 1
+  fi
+
+  python3 -B - "$symlink_result" "$hardlink_result" <<'PY'
+import json
+import pathlib
+import sys
+
+for result_path in map(pathlib.Path, sys.argv[1:]):
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    assert result["outcome"] == "passed"
+    assert result["source"]["clean_after"] is True
+PY
+}
+
 test_successful_candidate_run_records_observations() {
   local result_file="$scratch_directory/success.json"
   local disposable_root="$scratch_directory/tmp"
@@ -111,7 +163,7 @@ main() {
   fi
 
   local prerequisite script_path script_directory
-  for prerequisite in bash cp grep mkdir mktemp python3 realpath rm uname; do
+  for prerequisite in bash cmp cp git grep ln mkdir mktemp python3 realpath rm uname; do
     if ! command -v "$prerequisite" >/dev/null; then
       printf 'required command is unavailable: %s\n' "$prerequisite" >&2
       return 2
@@ -126,6 +178,7 @@ main() {
   scratch_directory=$(mktemp -d "$TEST_TMPDIR/fido-qualification-tdd.XXXXXX")
   trap 'rm -rf -- "$scratch_directory"' EXIT
 
+  test_result_links_do_not_mutate_source
   test_source_identity_rejection
   test_checker_failure_propagation
   test_imported_dependency_digest_rejection
