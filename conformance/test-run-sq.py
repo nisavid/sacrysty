@@ -18,6 +18,7 @@ from test_support import external_temporary_directory
 ROOT = pathlib.Path(__file__).parents[1]
 RUNNER = ROOT / "conformance/run-sq.sh"
 SHARED_HELPER = ROOT / "conformance/sq-evidence-lib.sh"
+PROCESS_HELPER = ROOT / "conformance/sq_evidence_process.py"
 
 
 def write_executable(path: pathlib.Path, content: str) -> None:
@@ -42,6 +43,7 @@ class RunSqTests(unittest.TestCase):
         (repository / "hooks").mkdir()
         shutil.copy2(RUNNER, repository / "conformance/run-sq.sh")
         shutil.copy2(SHARED_HELPER, repository / "conformance/sq-evidence-lib.sh")
+        shutil.copy2(PROCESS_HELPER, repository / "conformance/sq_evidence_process.py")
         (repository / "fixtures/rfc9580/message.txt").write_text(
             "Sacrysty disposable conformance fixture.\n"
         )
@@ -126,6 +128,10 @@ class RunSqTests(unittest.TestCase):
             r"""#!/bin/sh
 printf 'sq:%s\n' "$*" >>"$FAKE_TOOL_LOG"
 if [ "${1-}" = version ]; then
+    if [ "${FAKE_TOOL_FAULT:-}" = stdout-flood ]; then
+        python3 -c 'import sys; sys.stdout.buffer.write(b"x" * (2 * 1024 * 1024))'
+        exit 0
+    fi
     printf 'sq "quoted" \\ path\nsecond\tline\n'
     printf 'diagnostic: "quoted" \\ value\rcontrol\n' >&2
     exit 0
@@ -259,6 +265,23 @@ exit 97
         self.assertIn("\n", evidence["sq_version"])
         self.assertIn("\t", evidence["sqv_version"])
         self.assertIn("\r", evidence["sq_version"])
+
+    def test_stdout_flood_fails_instead_of_becoming_probe_evidence(self) -> None:
+        repository, environment = self.make_repository()
+        self.install_successful_fake_tools(repository, environment)
+        environment["FAKE_TOOL_FAULT"] = "stdout-flood"
+
+        result = subprocess.run(
+            ["bash", str(repository / "conformance/run-sq.sh")],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exceeded stdout limit", result.stderr)
+        self.assertNotIn('"sq_sign_verify": true', result.stdout)
 
     def test_shasum_is_used_when_gnu_hash_tools_are_unavailable(self) -> None:
         repository, environment = self.make_repository()

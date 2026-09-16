@@ -16,13 +16,14 @@ from test_support import external_temporary_directory
 
 ROOT = pathlib.Path(__file__).parents[1]
 CHECKER = ROOT / "conformance/check-source-inventory.py"
+STRICT_JSON_HELPER = ROOT / "conformance/strict_json.py"
 INVENTORY = ROOT / "docs/provenance/genesis-source-inventory.json"
 
 
 class SourceInventoryTests(unittest.TestCase):
     def run_checker(self, repository: pathlib.Path) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [sys.executable, "conformance/check-source-inventory.py"],
+            [sys.executable, "-B", "conformance/check-source-inventory.py"],
             cwd=repository,
             check=False,
             capture_output=True,
@@ -45,6 +46,7 @@ class SourceInventoryTests(unittest.TestCase):
         command.extend([str(ROOT), str(destination)])
         subprocess.run(command, check=True)
         shutil.copy2(CHECKER, destination / "conformance")
+        shutil.copy2(STRICT_JSON_HELPER, destination / "conformance")
         return destination
 
     def test_checked_in_inventory_matches_full_git_object_history(self) -> None:

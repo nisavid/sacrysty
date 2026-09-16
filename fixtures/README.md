@@ -9,6 +9,9 @@ real custody values, or captured private evidence.
   the public envelope and inert-extension boundary. Some hostile files are raw
   serialized inputs with duplicate members or non-JSON constants; they are
   intentionally invalid strict JSON rather than broken canonical fixtures.
+  Terminal-newline cases prove that identifier and version patterns consume
+  the complete string while documentary strings in `body` remain outside
+  envelope validation.
 - [`rfc9580/message.txt`](rfc9580/message.txt) and
   [`cases-v1.toml`](cases-v1.toml) supply the crypto-conformance probe. Reserved
   cases in the manifest do not establish protocol semantics or a passed check.

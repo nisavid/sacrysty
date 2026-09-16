@@ -17,6 +17,7 @@ from test_support import external_temporary_directory
 ROOT = pathlib.Path(__file__).parents[1]
 RUNNER = ROOT / "conformance/run-signing-profile.sh"
 SHARED_HELPER = ROOT / "conformance/sq-evidence-lib.sh"
+PROCESS_HELPER = ROOT / "conformance/sq_evidence_process.py"
 
 
 FAKE_TOOL = r"""#!/usr/bin/env python3
@@ -35,6 +36,9 @@ if name == "sq" and arguments == ["version"]:
     sys.stdout.buffer.write(b"sq-version:" + controls + b":end")
     raise SystemExit(0)
 if name == "sqv" and arguments == ["--version"]:
+    if os.environ.get("FAKE_TOOL_FAULT") == "stderr-flood":
+        sys.stderr.buffer.write(b"x" * (2 * 1024 * 1024))
+        raise SystemExit(0)
     sys.stdout.buffer.write(b"sqv-version:" + controls + b":end")
     raise SystemExit(0)
 
@@ -76,6 +80,27 @@ def write_executable(path: pathlib.Path, content: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
+def is_positive_independent_verification(call: dict[str, object]) -> bool:
+    if call.get("name") != "sqv":
+        return False
+    arguments = call.get("arguments")
+    if not isinstance(arguments, list) or len(arguments) != 7:
+        return False
+    if arguments[:3] != ["--time", "20260910", "--keyring"]:
+        return False
+    if arguments[4] != "--signature-file":
+        return False
+    certificate = pathlib.Path(arguments[3])
+    signature = pathlib.Path(arguments[5])
+    message = pathlib.Path(arguments[6])
+    return (
+        certificate.name == "signer-cert.pgp"
+        and signature.name == "message.sig"
+        and message.name == "message.bin"
+        and certificate.parent == signature.parent == message.parent
+    )
+
+
 class SigningProfileRunnerTests(unittest.TestCase):
     def make_repository(self) -> tuple[pathlib.Path, dict[str, str]]:
         temporary_directory = external_temporary_directory(
@@ -93,6 +118,7 @@ class SigningProfileRunnerTests(unittest.TestCase):
         shutil.copy2(RUNNER, repository / "conformance")
         if SHARED_HELPER.exists():
             shutil.copy2(SHARED_HELPER, repository / "conformance")
+        shutil.copy2(PROCESS_HELPER, repository / "conformance")
         (repository / "fixtures/signing/message.bin").write_bytes(
             b"Sacrysty disposable signing fixture.\n"
         )
@@ -215,15 +241,9 @@ class SigningProfileRunnerTests(unittest.TestCase):
             self.assertIn(("--home", "none"), pairs)
             self.assertIn(("--key-store", "none"), pairs)
             self.assertIn(("--cert-store", "none"), pairs)
-        self.assertTrue(
-            any(
-                call["name"] == "sqv"
-                and not any(
-                    "tampered" in value or "wrong-cert" in value
-                    for value in call["arguments"]
-                )
-                for call in calls
-            ),
+        self.assertEqual(
+            sum(is_positive_independent_verification(call) for call in calls),
+            1,
             "independent positive verification did not run",
         )
         temporary_prefix = pathlib.Path(environment["TMPDIR"]) / (
@@ -247,6 +267,16 @@ class SigningProfileRunnerTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("clean worktree", result.stderr)
         self.assertFalse(pathlib.Path(environment["FAKE_TOOL_LOG"]).exists())
+
+    def test_stderr_flood_fails_instead_of_becoming_probe_evidence(self) -> None:
+        repository, environment = self.make_repository()
+        environment["FAKE_TOOL_FAULT"] = "stderr-flood"
+
+        result = self.run_runner(repository, environment)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exceeded stderr limit", result.stderr)
+        self.assertNotIn('"detached_sign_verify": true', result.stdout)
 
     def test_verification_and_each_negative_case_fail_closed(self) -> None:
         for mode in (

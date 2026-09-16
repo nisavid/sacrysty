@@ -38,7 +38,10 @@ it.
 
 The crypto probes record observed behavior for the selected standard tools.
 They require clean source, portable hash tools, admitted JSON results, and
-verified temporary cleanup before reporting success. Post-quantum capability
+verified temporary cleanup before reporting success. Selected tool processes
+and aggregate result capture have fixed time, stream, and regular-file bounds;
+ordinary same-process-group descendants are terminated before completion.
+These controls are not a malicious-process sandbox. Post-quantum capability
 remains subject to the existing positive-operation and independent-verification
 gate; explicit unsupported capability, indeterminate probe failure, and failed
 round trip remain distinct results.

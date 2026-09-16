@@ -10,6 +10,9 @@ SQ_EVIDENCE_SQ_COMMON=(
   --key-store none
   --cert-store none
 )
+SQ_EVIDENCE_PROCESS_HELPER=$(
+  CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P
+)/sq_evidence_process.py
 
 sq_evidence_require_tools() {
   command -v "$1" >/dev/null
@@ -22,6 +25,76 @@ sq_evidence_require_clean_source() {
   local label=$2
   if [[ -n $(git -C "$root" status --porcelain=v1 --untracked-files=all) ]]; then
     printf '%s evidence requires a clean worktree\n' "$label" >&2
+    return 1
+  fi
+}
+
+sq_evidence_run_process() {
+  local mode=$1
+  local status_path=$2
+  local stdout_path=$3
+  local stderr_path=$4
+  shift 4
+  python3 -B "$SQ_EVIDENCE_PROCESS_HELPER" \
+    "$mode" "$status_path" "$stdout_path" "$stderr_path" -- "$@"
+}
+
+sq_evidence_run_tool() {
+  sq_evidence_run_process tool "$@"
+}
+
+sq_evidence_run_probe() {
+  sq_evidence_run_process probe "$@"
+}
+
+sq_evidence_read_status() {
+  local path=$1
+  local status
+  if [[ ! -r $path ]]; then
+    printf 'selected process status is invalid\n' >&2
+    return 1
+  fi
+  status=$(<"$path")
+  if [[ ! $status =~ ^[0-9]+$ ]]; then
+    printf 'selected process status is invalid\n' >&2
+    return 1
+  fi
+  printf '%s\n' "$status"
+}
+
+sq_evidence_require_tool_success() {
+  local label=$1
+  local status_path=$2
+  local stdout_path=$3
+  local stderr_path=$4
+  local child_status
+  shift 4
+  sq_evidence_run_tool \
+    "$status_path" "$stdout_path" "$stderr_path" "$@" || return 1
+  child_status=$(sq_evidence_read_status "$status_path") || return 1
+  if (( child_status != 0 )); then
+    printf '%s exited with status %s\n' "$label" "$child_status" >&2
+    return 1
+  fi
+}
+
+sq_evidence_require_tool_rejection() {
+  local label=$1
+  local status_path=$2
+  local stdout_path=$3
+  local stderr_path=$4
+  local child_status
+  shift 4
+  sq_evidence_run_tool \
+    "$status_path" "$stdout_path" "$stderr_path" "$@" || return 1
+  child_status=$(sq_evidence_read_status "$status_path") || return 1
+  if (( child_status == 0 )); then
+    printf '%s unexpectedly succeeded\n' "$label" >&2
+    return 1
+  fi
+  if (( child_status >= 124 )); then
+    printf '%s did not complete normally (status %s)\n' \
+      "$label" "$child_status" >&2
     return 1
   fi
 }

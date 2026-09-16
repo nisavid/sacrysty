@@ -4,9 +4,16 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import pathlib
 import subprocess
+
+from strict_json import (
+    DuplicateMemberError,
+    InvalidJsonSyntaxError,
+    InvalidUtf8Error,
+    NonFiniteNumberError,
+    decode_strict_json,
+)
 
 ROOT = pathlib.Path(__file__).parents[1]
 INVENTORY = ROOT / "docs/provenance/genesis-source-inventory.json"
@@ -45,27 +52,21 @@ def _git(*arguments: str) -> bytes:
         raise InventoryError(f"Git object check failed: {command}") from exc
 
 
-def _strict_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for name, value in pairs:
-        if name in result:
-            raise InventoryError(f"duplicate inventory member: {name}")
-        result[name] = value
-    return result
-
-
-def _reject_constant(value: str) -> object:
-    raise InventoryError(f"non-JSON inventory constant: {value}")
-
-
 def _load_inventory() -> dict[str, object]:
     try:
-        value = json.loads(
-            INVENTORY.read_bytes().decode("utf-8"),
-            object_pairs_hook=_strict_object,
-            parse_constant=_reject_constant,
+        value = decode_strict_json(INVENTORY.read_bytes())
+    except OSError as exc:
+        raise InventoryError("source inventory is not readable strict JSON") from exc
+    except DuplicateMemberError as exc:
+        raise InventoryError(f"duplicate inventory member: {exc.member}") from exc
+    except NonFiniteNumberError as exc:
+        label = (
+            "non-JSON inventory constant"
+            if exc.value in {"NaN", "Infinity", "-Infinity"}
+            else "non-finite inventory number"
         )
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise InventoryError(f"{label}: {exc.value}") from exc
+    except (InvalidUtf8Error, InvalidJsonSyntaxError) as exc:
         raise InventoryError("source inventory is not readable strict JSON") from exc
     if not isinstance(value, dict):
         raise InventoryError("source inventory is not an object")

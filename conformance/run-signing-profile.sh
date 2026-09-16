@@ -29,28 +29,35 @@ wrong_key="$work/wrong-key.pgp"
 wrong_cert="$work/wrong-cert.pgp"
 cp "$root/fixtures/signing/message.bin" "$message"
 
-"$sq_bin" "${SQ_EVIDENCE_SQ_COMMON[@]}" --time 20260910 key generate --own-key \
+sq_evidence_require_tool_success \
+  'signing key generation' "$work/generate.status" \
+  "$work/generate.stdout" "$work/generate.stderr" \
+  "$sq_bin" "${SQ_EVIDENCE_SQ_COMMON[@]}" --time 20260910 key generate --own-key \
   --userid 'Sacrysty Fixture <fixture@example.invalid>' --profile rfc9580 \
   --cipher-suite cv25519 --without-password --output "$key" \
-  --rev-cert "$work/revocation.asc" >"$work/generate.log" 2>&1
-"$sq_bin" "${SQ_EVIDENCE_SQ_COMMON[@]}" key delete --cert-file "$key" --output "$cert" >"$work/extract.log" 2>&1
-"$sq_bin" "${SQ_EVIDENCE_SQ_COMMON[@]}" --time 20260910 sign --binary \
-  --signature-file "$sig" --signer-file "$key" "$message" >"$work/sign.log" 2>&1
-"$sqv_bin" --time 20260910 --keyring "$cert" --signature-file "$sig" \
-  "$message" >"$work/verify.log" 2>&1
+  --rev-cert "$work/revocation.asc"
+sq_evidence_require_tool_success \
+  'signing certificate extraction' "$work/extract.status" \
+  "$work/extract.stdout" "$work/extract.stderr" \
+  "$sq_bin" "${SQ_EVIDENCE_SQ_COMMON[@]}" key delete \
+  --cert-file "$key" --output "$cert"
+sq_evidence_require_tool_success \
+  'detached signing' "$work/sign.status" \
+  "$work/sign.stdout" "$work/sign.stderr" \
+  "$sq_bin" "${SQ_EVIDENCE_SQ_COMMON[@]}" --time 20260910 sign --binary \
+  --signature-file "$sig" --signer-file "$key" "$message"
+sq_evidence_require_tool_success \
+  'independent detached-signature verification' "$work/verify.status" \
+  "$work/verify.stdout" "$work/verify.stderr" \
+  "$sqv_bin" --time 20260910 --keyring "$cert" --signature-file "$sig" \
+  "$message"
 
 run_rejection() {
   local status_file=$1
   shift
-  set +e
-  "$@" >"${status_file}.stdout" 2>"${status_file}.stderr"
-  local status=$?
-  set -e
-  printf '%s' "$status" >"$status_file"
-  if [ "$status" -eq 0 ]; then
-    echo 'negative verification unexpectedly succeeded' >&2
-    exit 1
-  fi
+  sq_evidence_require_tool_rejection \
+    'negative verification' "$status_file" \
+    "${status_file}.stdout" "${status_file}.stderr" "$@"
 }
 
 cp "$message" "$tampered"
@@ -62,11 +69,18 @@ printf 'tamper\n' >>"$tampered_sig"
 run_rejection "$work/tampered-signature.status" "$sqv_bin" --time 20260910 \
   --keyring "$cert" --signature-file "$tampered_sig" "$message"
 
-"$sq_bin" "${SQ_EVIDENCE_SQ_COMMON[@]}" --time 20260910 key generate --own-key \
+sq_evidence_require_tool_success \
+  'wrong-certificate key generation' "$work/wrong-generate.status" \
+  "$work/wrong-generate.stdout" "$work/wrong-generate.stderr" \
+  "$sq_bin" "${SQ_EVIDENCE_SQ_COMMON[@]}" --time 20260910 key generate --own-key \
   --userid 'Sacrysty Other Fixture <other@example.invalid>' --profile rfc9580 \
   --cipher-suite cv25519 --without-password --output "$wrong_key" \
-  --rev-cert "$work/wrong-revocation.asc" >"$work/wrong-generate.log" 2>&1
-"$sq_bin" "${SQ_EVIDENCE_SQ_COMMON[@]}" key delete --cert-file "$wrong_key" --output "$wrong_cert" >"$work/wrong-extract.log" 2>&1
+  --rev-cert "$work/wrong-revocation.asc"
+sq_evidence_require_tool_success \
+  'wrong-certificate extraction' "$work/wrong-extract.status" \
+  "$work/wrong-extract.stdout" "$work/wrong-extract.stderr" \
+  "$sq_bin" "${SQ_EVIDENCE_SQ_COMMON[@]}" key delete \
+  --cert-file "$wrong_key" --output "$wrong_cert"
 run_rejection "$work/wrong-certificate.status" "$sqv_bin" --time 20260910 \
   --keyring "$wrong_cert" --signature-file "$sig" "$message"
 
@@ -83,8 +97,22 @@ wrong_certificate_command=$(
     | sq_evidence_json_string
 )
 source_revision=$(git -C "$root" rev-parse HEAD)
-sq_version=$("$sq_bin" version 2>&1 | sq_evidence_json_string)
-sqv_version=$("$sqv_bin" --version 2>&1 | sq_evidence_json_string)
+sq_evidence_require_tool_success \
+  'sq version' "$work/sq-version.status" \
+  "$work/sq-version.stdout" "$work/sq-version.stderr" \
+  "$sq_bin" version
+sq_version=$(
+  cat "$work/sq-version.stdout" "$work/sq-version.stderr" \
+    | sq_evidence_json_string
+)
+sq_evidence_require_tool_success \
+  'sqv version' "$work/sqv-version.status" \
+  "$work/sqv-version.stdout" "$work/sqv-version.stderr" \
+  "$sqv_bin" --version
+sqv_version=$(
+  cat "$work/sqv-version.stdout" "$work/sqv-version.stderr" \
+    | sq_evidence_json_string
+)
 message_bytes=$(wc -c <"$message" | tr -d ' ')
 signature_bytes=$(wc -c <"$sig" | tr -d ' ')
 message_sha256=$(sq_evidence_hash 256 "$message")

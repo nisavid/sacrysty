@@ -17,19 +17,34 @@ Each check is also available separately:
 
 | Command | Exercised surface | Evidence boundary |
 | --- | --- | --- |
-| `python3 conformance/check-domain-model.py` | Canonical and hostile serialized public-record fixtures | Strict JSON, schema-derived envelope structure, and inert-extension admission; no record-family or operational qualification. |
+| `python3 conformance/check-domain-model.py` | Canonical and hostile serialized public-record fixtures | `envelope_admissible` checks strict JSON, schema-derived envelope structure, and inert extensions; family bodies remain unvalidated. |
 | `python3 conformance/test-domain-model.py` | Checker rejection and diagnostic behavior | Constructed valid and malformed envelopes, including optimized Python. |
+| `python3 conformance/test-strict-json.py` | Shared strict decoder | Duplicate members, non-finite numbers, UTF-8, syntax, and preserved JSON string content. |
 | `./conformance/run-sq.sh` | The crypto-conformance profile and disposable `sq`/`sqv` operations | Observations for the selected tools and runtime; no project-wide support or adopter acceptance. |
 | `python3 conformance/test-run-sq.py` | Crypto-probe source binding, portability, JSON, and cleanup | Constructed tool responses; no cryptographic capability claim. |
 | `./conformance/run-signing-profile.sh` | Detached signatures and rejection diagnostics | The signing-profile fixture; no release-signing authority. |
 | `python3 conformance/test-run-signing-profile.py` | Signing-runner source, store, JSON, verification, rejection, and cleanup controls | Constructed tool responses; no cryptographic capability claim. |
+| `python3 conformance/test-sq-evidence-process.py` | Process bounds shared by the probe runners and aggregate | Constructed timeout, output, file-growth, exit-status, and ordinary same-process-group cases. |
 | `python3 conformance/check-fido-custody.py` | Synthetic one-shot custody workers | Success and failure paths; no authenticator, plugin, native-library, or production qualification. |
 | `python3 conformance/check-source-inventory.py` | Producer commits and every inventoried source path | Complete Git object history, ancestry, tree membership, modes, blobs, byte lengths, and hashes; no hosted availability or review claim. |
 | `python3 conformance/check-probe-result.py <crypto-conformance\|signing-profile> <result.json> <revision>` | Captured crypto-probe JSON | Required result identity, source binding, profile result, diagnostics, and mandatory check values; no qualification beyond the admitted observation. |
+| `python3 conformance/test-check-conformance.py` | Aggregate runner and admission order | Constructed runner results, statuses, size limits, and ordinary same-process-group cleanup. |
 
 The crypto probes generate disposable key material in temporary directories
-and disable default key and certificate stores. The
-[crypto-conformance profile](../profiles/crypto-conformance-v1.toml) and
+and disable default key and certificate stores. Every selected `sq` or `sqv`
+process has a 120-second limit, a 1 MiB limit on each captured stream, and a
+16 MiB per-regular-file limit. The aggregate gives each complete probe runner
+900 seconds and limits its stdout result and stderr to 1 MiB each. These fixed
+internal limits have no configuration surface.
+
+The process helper starts each selected process in a new process group and
+terminates and reaps ordinary descendants in that group before returning.
+Timeout, output overflow, file-growth failure, or cleanup failure fails the
+probe; none is an unsupported or positive observation. A process group is not
+a sandbox, and these bounds do not claim to contain a process that deliberately
+escapes its group.
+
+The [crypto-conformance profile](../profiles/crypto-conformance-v1.toml) and
 [case manifest](../fixtures/cases-v1.toml) state their intended claims.
 RFC 9980 support requires the specified positive operations and independent
 verification; an algorithm name in help output does not establish support. An
@@ -38,13 +53,16 @@ are `probe-failed`, and failures after generation are `round-trip-failed`.
 Only the first is an admitted nonpositive observation for a passing run.
 
 The domain checker implements only the JSON Schema constructs present in the
-checked-in closed-envelope schema. It fails closed if that schema introduces an
-unsupported construct; it is not a general JSON Schema implementation.
+checked-in closed-envelope schema. Its `envelope_admissible` entrypoint checks
+that envelope and inert extensions but does not validate a record-family body.
+It fails closed if the envelope schema introduces an unsupported construct; it
+is not a general JSON Schema implementation.
 
-The aggregate captures each real probe's stdout, parses it as strict JSON,
-checks its source revision and mandatory results, and requires a zero runner
-exit status before announcing success. Malformed, missing, wrong-schema,
-failed, indeterminate, or false-check evidence cannot pass the aggregate.
+The aggregate captures each real probe's bounded stdout and stderr, accepts the
+runner's zero exit status, then parses stdout as strict JSON and checks its
+source revision and mandatory results before announcing admission. Malformed,
+oversized, missing, wrong-schema, failed, indeterminate, or false-check evidence
+cannot pass the aggregate.
 
 Bind recorded results to the tested source revision and selected runtime.
 Documentation examples consume these fixtures and results. Genesis acceptance

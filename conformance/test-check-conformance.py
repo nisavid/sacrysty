@@ -6,8 +6,10 @@ from __future__ import annotations
 import os
 import pathlib
 import shutil
+import signal
 import stat
 import subprocess
+import time
 import unittest
 
 from test_support import external_temporary_directory
@@ -16,6 +18,8 @@ ROOT = pathlib.Path(__file__).parents[1]
 AGGREGATE = ROOT / "scripts/check-conformance.sh"
 RESULT_CHECKER = ROOT / "conformance/check-probe-result.py"
 SHARED_HELPER = ROOT / "conformance/sq-evidence-lib.sh"
+STRICT_JSON_HELPER = ROOT / "conformance/strict_json.py"
+PROCESS_HELPER = ROOT / "conformance/sq_evidence_process.py"
 
 
 PYTHON_STUB = r"""#!/usr/bin/env python3
@@ -39,6 +43,20 @@ sha256 = "b" * 64
 sha512 = "c" * 128
 fixture = {"bytes": 1, "sha256": sha256, "sha512": sha512}
 name = pathlib.Path(__file__).name
+if (
+    os.environ.get("FAKE_AGGREGATE_RESULT") == "same-group-descendant"
+    and name == "run-sq.sh"
+):
+    child = subprocess.Popen(
+        [__import__("sys").executable, "-c", "import time; time.sleep(30)"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    pathlib.Path(os.environ["AGGREGATE_DESCENDANT_PID"]).write_text(str(child.pid))
+if os.environ.get("FAKE_AGGREGATE_RESULT") == "stdout-flood":
+    __import__("sys").stdout.buffer.write(b"x" * (2 * 1024 * 1024))
+    raise SystemExit(0)
 if os.environ.get("FAKE_AGGREGATE_RESULT") == "malformed":
     print("not-json")
     raise SystemExit(0)
@@ -103,6 +121,8 @@ if os.environ.get("FAKE_AGGREGATE_RESULT") == "false-check":
     result["checks"]["temporary_key_material_removed"] = False
 json.dump(result, __import__("sys").stdout)
 print()
+if os.environ.get("FAKE_AGGREGATE_RESULT") == "nonzero":
+    raise SystemExit(7)
 """
 
 
@@ -110,6 +130,13 @@ def write_executable(path: pathlib.Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+
+def terminate_if_alive(pid: int) -> None:
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
 
 
 class AggregateConformanceTests(unittest.TestCase):
@@ -128,6 +155,8 @@ class AggregateConformanceTests(unittest.TestCase):
         shutil.copy2(AGGREGATE, repository / "scripts")
         shutil.copy2(RESULT_CHECKER, repository / "conformance")
         shutil.copy2(SHARED_HELPER, repository / "conformance")
+        shutil.copy2(STRICT_JSON_HELPER, repository / "conformance")
+        shutil.copy2(PROCESS_HELPER, repository / "conformance")
         write_executable(
             repository / "scripts/check-repository.sh", "#!/bin/sh\nexit 0\n"
         )
@@ -137,9 +166,11 @@ class AggregateConformanceTests(unittest.TestCase):
             "check-fido-custody.py",
             "test-run-sq.py",
             "test-run-signing-profile.py",
+            "test-sq-evidence-process.py",
             "check-source-inventory.py",
             "test-source-inventory.py",
             "test-probe-result.py",
+            "test-strict-json.py",
             "test-check-conformance.py",
         ):
             write_executable(repository / "conformance" / name, PYTHON_STUB)
@@ -209,6 +240,53 @@ class AggregateConformanceTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn("complete conformance checks passed", result.stdout)
 
+    def test_valid_json_from_nonzero_runner_is_never_announced_as_admitted(
+        self,
+    ) -> None:
+        repository, environment = self.make_repository()
+        environment["FAKE_AGGREGATE_RESULT"] = "nonzero"
+
+        result = self.run_aggregate(repository, environment)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("probe result admitted", result.stdout)
+        self.assertIn("crypto-conformance probe exited with status 7", result.stderr)
+
+    def test_oversized_probe_result_fails_at_the_aggregate_bound(self) -> None:
+        repository, environment = self.make_repository()
+        environment["FAKE_AGGREGATE_RESULT"] = "stdout-flood"
+
+        result = self.run_aggregate(repository, environment)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("probe process exceeded stdout limit", result.stderr)
+        self.assertNotIn("probe result admitted", result.stdout)
+
+    def test_aggregate_reaps_an_ordinary_same_group_runner_descendant(self) -> None:
+        repository, environment = self.make_repository()
+        pid_path = pathlib.Path(environment["TEST_RUNTIME"]) / "descendant.pid"
+        environment.update(
+            {
+                "AGGREGATE_DESCENDANT_PID": str(pid_path),
+                "FAKE_AGGREGATE_RESULT": "same-group-descendant",
+            }
+        )
+
+        result = self.run_aggregate(repository, environment)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        descendant = int(pid_path.read_text())
+        self.addCleanup(terminate_if_alive, descendant)
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            try:
+                os.kill(descendant, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.01)
+        else:
+            self.fail(f"aggregate runner descendant survived: {descendant}")
+
     def test_complete_aggregate_runs_synthetic_checks_in_both_modes(self) -> None:
         repository, environment = self.make_repository()
 
@@ -225,9 +303,11 @@ class AggregateConformanceTests(unittest.TestCase):
             "check-fido-custody.py",
             "test-run-sq.py",
             "test-run-signing-profile.py",
+            "test-sq-evidence-process.py",
             "check-source-inventory.py",
             "test-source-inventory.py",
             "test-probe-result.py",
+            "test-strict-json.py",
             "test-check-conformance.py",
         ):
             self.assertEqual(observations.get(name), {0, 1}, name)

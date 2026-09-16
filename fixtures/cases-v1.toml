@@ -36,8 +36,3 @@ evidence = "conformance/run-sq.sh"
 id = "revoked-or-expired-certificate"
 status = "reserved"
 owner = "Sacrysty #13"
-
-[[case]]
-id = "rollback-stale-offline-historical-equivocation"
-status = "reserved"
-owner = "Sacrysty #3"

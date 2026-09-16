@@ -8,14 +8,14 @@
   "properties": {
     "record_type": {"type": "string", "enum": ["contract", "profile", "adapter", "qualification", "release"]},
     "schema_version": {"const": "io.nisavid.sacrysty.public-record/v1"},
-    "record_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*:[a-z0-9][a-z0-9._/-]*$"},
-    "publisher": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$"},
-    "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
-    "content_digest": {"type": "string", "pattern": "^sha512-[0-9a-f]{128}$"},
+    "record_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*:[a-z0-9][a-z0-9._/-]*(?![\\s\\S])"},
+    "publisher": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*(?![\\s\\S])"},
+    "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?![\\s\\S])"},
+    "content_digest": {"type": "string", "pattern": "^sha512-[0-9a-f]{128}(?![\\s\\S])"},
     "body": {"type": "object"},
     "extensions": {
       "type": "object",
-      "propertyNames": {"pattern": "^[a-z0-9]+(?:\\.[a-z0-9-]+)+$"},
+      "propertyNames": {"pattern": "^[a-z0-9]+(?:\\.[a-z0-9-]+)+(?![\\s\\S])"},
       "additionalProperties": {"$ref": "#/$defs/extension"}
     }
   },
@@ -26,7 +26,7 @@
       "required": ["state", "version", "criticality"],
       "properties": {
         "state": {"const": "inert"},
-        "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?![\\s\\S])"},
         "criticality": {"enum": ["optional", "required"]},
         "metadata": {"type": "object"}
       }

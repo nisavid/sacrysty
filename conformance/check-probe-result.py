@@ -3,10 +3,17 @@
 
 from __future__ import annotations
 
-import json
 import re
 import sys
 from pathlib import Path
+
+from strict_json import (
+    DuplicateMemberError,
+    InvalidJsonSyntaxError,
+    InvalidUtf8Error,
+    NonFiniteNumberError,
+    decode_strict_json,
+)
 
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SHA512 = re.compile(r"^[0-9a-f]{128}$")
@@ -16,28 +23,21 @@ class ResultError(ValueError):
     """A probe result cannot support a passing aggregate result."""
 
 
-def _reject_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for name, value in pairs:
-        if name in result:
-            raise ResultError(f"duplicate result member: {name}")
-        result[name] = value
-    return result
-
-
-def _reject_constant(value: str) -> object:
-    raise ResultError(f"non-JSON result constant: {value}")
-
-
 def _load_result(path: Path) -> dict[str, object]:
     try:
-        serialized = path.read_bytes().decode("utf-8")
-        result = json.loads(
-            serialized,
-            object_pairs_hook=_reject_duplicates,
-            parse_constant=_reject_constant,
+        result = decode_strict_json(path.read_bytes())
+    except OSError as exc:
+        raise ResultError("probe result is not readable strict JSON") from exc
+    except DuplicateMemberError as exc:
+        raise ResultError(f"duplicate result member: {exc.member}") from exc
+    except NonFiniteNumberError as exc:
+        label = (
+            "non-JSON result constant"
+            if exc.value in {"NaN", "Infinity", "-Infinity"}
+            else "non-finite result number"
         )
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ResultError(f"{label}: {exc.value}") from exc
+    except (InvalidUtf8Error, InvalidJsonSyntaxError) as exc:
         raise ResultError("probe result is not readable strict JSON") from exc
     if not isinstance(result, dict):
         raise ResultError("probe result is not an object")

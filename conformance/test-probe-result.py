@@ -92,7 +92,14 @@ class ProbeResultTests(unittest.TestCase):
             result_path = pathlib.Path(directory) / "result.json"
             result_path.write_bytes(content)
             return subprocess.run(
-                [sys.executable, str(CHECKER), kind, str(result_path), REVISION],
+                [
+                    sys.executable,
+                    "-B",
+                    str(CHECKER),
+                    kind,
+                    str(result_path),
+                    REVISION,
+                ],
                 check=False,
                 capture_output=True,
                 text=True,
@@ -121,6 +128,7 @@ class ProbeResultTests(unittest.TestCase):
                 "non-json constant",
                 b'{"schema":"io.nisavid.sacrysty.crypto-conformance-result/v1","value":NaN}',
             ),
+            ("invalid UTF-8", b'{"schema":"\xff"}'),
         ]
         missing = crypto_result()
         missing.pop("checks")

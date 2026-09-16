@@ -43,12 +43,16 @@ python3 -B conformance/test-run-sq.py
 python3 -B -O conformance/test-run-sq.py
 python3 -B conformance/test-run-signing-profile.py
 python3 -B -O conformance/test-run-signing-profile.py
+python3 -B conformance/test-sq-evidence-process.py
+python3 -B -O conformance/test-sq-evidence-process.py
 python3 -B conformance/check-source-inventory.py
 python3 -B -O conformance/check-source-inventory.py
 python3 -B conformance/test-source-inventory.py
 python3 -B -O conformance/test-source-inventory.py
 python3 -B conformance/test-probe-result.py
 python3 -B -O conformance/test-probe-result.py
+python3 -B conformance/test-strict-json.py
+python3 -B -O conformance/test-strict-json.py
 python3 -B conformance/test-check-conformance.py
 python3 -B -O conformance/test-check-conformance.py
 
@@ -56,17 +60,26 @@ run_and_admit_probe() {
   local kind=$1
   local runner=$2
   local output=$3
+  local runner_stderr="${output}.stderr"
+  local runner_status_file="${output}.status"
   local runner_status
-  set +e
-  "$runner" >"$output"
-  runner_status=$?
-  set -e
-  python3 -B conformance/check-probe-result.py \
-    "$kind" "$output" "$source_revision"
+  if ! sq_evidence_run_probe \
+    "$runner_status_file" "$output" "$runner_stderr" "$runner"; then
+    if [[ -s $runner_stderr ]]; then
+      cat "$runner_stderr" >&2
+    fi
+    return 1
+  fi
+  if [[ -s $runner_stderr ]]; then
+    cat "$runner_stderr" >&2
+  fi
+  runner_status=$(sq_evidence_read_status "$runner_status_file")
   if [[ $runner_status -ne 0 ]]; then
     printf '%s probe exited with status %s\n' "$kind" "$runner_status" >&2
     return 1
   fi
+  python3 -B conformance/check-probe-result.py \
+    "$kind" "$output" "$source_revision"
   cat -- "$output"
 }
 

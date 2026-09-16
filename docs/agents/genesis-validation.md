@@ -44,12 +44,20 @@ subsequent crypto probes exercise the selected real tools. The
 Neither mode is a hardware or adoption qualification. The empty Rust library
 test harness establishes buildability and contains no behavioral tests.
 
+Each selected `sq` or `sqv` process is limited to 120 seconds, 1 MiB on each
+captured output stream, and 16 MiB per regular file. The aggregate limits each
+complete probe runner to 900 seconds and 1 MiB on stdout and stderr. It
+terminates ordinary same-process-group descendants before returning. These
+bounds fail closed on timeout, overflow, or cleanup failure; they are not a
+sandbox for a process that deliberately escapes its group.
+
 Bind tool observations to the exact source commit, runtime versions,
 executable/dependency identities, fixture bytes, and measured results. The
-aggregate parses each result, checks its schema and mandatory booleans, and
-requires the tested commit. Record `unsupported`, `probe-failed`,
-`round-trip-failed`, or unrun directly; only an explicit recognized capability
-rejection is `unsupported`, and none becomes a positive capability claim.
+aggregate first requires a zero runner status, then parses each result, checks
+its schema and mandatory booleans, and requires the tested commit. Record
+`unsupported`, `probe-failed`, `round-trip-failed`, or unrun directly; only an
+explicit recognized capability rejection is `unsupported`, and none becomes a
+positive capability claim.
 
 Native Linux and macOS build results belong to the revision that ran in CI.
 Synthetic conformance on a platform does not establish that platform's
