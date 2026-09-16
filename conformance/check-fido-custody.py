@@ -124,6 +124,9 @@ message = {
 if case == "mismatch":
     message["plugin_digest"] = "sha256:wrong"
 if case == "bad-uv":
+    # Exercise semantic rejection after controlled latency. This does not model
+    # a hosted scheduler.
+    time.sleep(0.2)
     message["uv_mode"] = []
 if case == "non-finite":
     message["timing_class"] = float("nan")
@@ -700,11 +703,27 @@ def main() -> None:
             ("worker I/O failure", "worker cleanup failure"),
         )
 
+        expect_failure(
+            OneShotCustodyAdapter(
+                command,
+                timeout_seconds=1.0,
+                environment=environment,
+            ),
+            request_for("crash"),
+            "worker failure",
+        )
+        expect_failure(
+            OneShotCustodyAdapter(
+                command,
+                timeout_seconds=0.1,
+                environment=environment,
+            ),
+            request_for("timeout"),
+            "worker timeout",
+        )
         for case, diagnostic in (
-            ("crash", "worker failure"),
             ("partial", "incomplete worker output"),
             ("mismatch", "plugin_digest mismatch"),
-            ("timeout", "worker timeout"),
             ("bad-uv", "unknown UV mode"),
             ("duplicate", "malformed worker output"),
             ("non-finite", "malformed worker output"),
@@ -712,7 +731,7 @@ def main() -> None:
             expect_failure(
                 OneShotCustodyAdapter(
                     command,
-                    timeout_seconds=0.1,
+                    timeout_seconds=1.0,
                     environment=environment,
                 ),
                 request_for(case),
