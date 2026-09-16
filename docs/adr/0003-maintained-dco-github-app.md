@@ -110,6 +110,15 @@ supported recheck response, exact selected-repository and installed-permission
 readback, and complete protection readback. Other negative and parser cases do
 not need duplicate hosted pull requests.
 
+Every positive qualification, recheck, already-correct no-op, and pre-merge
+conformance receipt must retain the check output and show the ordinary automated
+success from the reviewed source: output title `DCO` and output summary
+`All commits are signed off!`. The manual-success summary
+`Commit sign-off was manually approved.` proves only an explicit exception and
+never routine qualification. Missing, ambiguous, error, or manual output is not
+inferred to be an automated pass. A negative receipt instead retains its actual
+observed outcome and reason.
+
 Any intentionally unsigned hosted fixture is a separate, explicitly authorized
 non-merge draft fixture that cannot merge. It must not weaken routine human
 sign-off, rewrite the original bot contribution, or use manual approval as the

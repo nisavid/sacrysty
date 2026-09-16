@@ -34,8 +34,11 @@ remain unchanged.
   separately establish general email-address syntax.
 - The protected branch requires a current applicable `DCO` check from app ID
   `1861`. Every unrelated protection and required check remains unchanged.
+- An ordinary automated success has output title `DCO` and output summary
+  `All commits are signed off!` in the reviewed upstream source.
 - **Set DCO to pass** is a manual exception available to a user with write
-  access. It is not a contribution sign-off or routine conformance evidence.
+  access. Its output summary is `Commit sign-off was manually approved.` It is
+  not a contribution sign-off or routine conformance evidence.
 
 For routine contributions, sign off every human-authored commit, including
 human-authored merge commits, even though the app exempts ordinary merge
@@ -112,7 +115,8 @@ gh api --paginate --slurp \
   "/repos/nisavid/sacrysty/commits/HEAD_SHA/check-runs?per_page=100" \
   --jq '[.[].check_runs[] | select(.name == "DCO" and .app.id == 1861)]
         | sort_by(.id) | last
-        | {id,name,head_sha,status,conclusion,app:{id:.app.id,slug:.app.slug},html_url}'
+        | {id,name,head_sha,status,conclusion,app:{id:.app.id,slug:.app.slug},
+           output:{title:.output.title,summary:.output.summary},html_url}'
 ```
 
 Require the returned `head_sha` to equal the pull request's current head and the
@@ -120,6 +124,15 @@ status and conclusion to match the case being verified. Same-named checks from
 other apps and checks on earlier heads do not count. Rechecks may leave more
 than one related run or attempt, so do not infer an exact count across check
 apps; retain the current applicable matching result.
+
+For every positive qualification, recheck, already-correct no-op, and pre-merge
+conformance receipt, require `status: completed`, `conclusion: success`, output
+title `DCO`, and output summary `All commits are signed off!`. Missing,
+ambiguous, error, or manual-approval output is not an automated pass. Keep a
+manual approval only as the explicit exception described below. For the
+required negative receipt, retain its actual status and conclusion and its
+output summary as the observed outcome and reason; do not infer either from an
+expected success or failure.
 
 To exercise recovery, submit a non-bot pull-request review or inline review
 comment containing this line by itself:
@@ -135,8 +148,19 @@ installation and authorized delivery diagnostics; do not weaken protection.
 
 ## Migrate from the legacy checker
 
-Use this branch only while `DCO compliance` from GitHub Actions integration
-`15368` is still required. Keep it active through the required-check switch.
+Read the complete applicable rule before choosing a path, and classify every
+required-check entry for these two identities:
+
+- If only `DCO` from integration `1861` is required, verify the complete routine
+  state, including configuration, selected repositories, approved permissions,
+  current applicable automated success, and the whole desired rule. Record that
+  verification as a no-op with no installation or ruleset mutation.
+- If only `DCO compliance` from GitHub Actions integration `15368` is required,
+  start the staged migration below and keep it active through the switch.
+- If both identities, neither identity, or a duplicate of either identity is
+  present, stop for adjudication without changing the installation or ruleset.
+
+Never add the old required check to make the staged migration reachable.
 
 ### 1. Record the starting state
 
@@ -175,16 +199,18 @@ parser, merge, membership, or remediation cases on GitHub.
 
 ### 3. Replace the required check and land the migration
 
+Immediately before the write, confirm that only `DCO compliance` from
+integration `15368` is present. If that state changed, stop and classify it
+again under the entry rules above.
+
 Replace only `DCO compliance` with integration ID `15368` by `DCO` with
 integration ID `1861`. Preserve every other rule, parameter, bypass actor,
 required check, and integration ID value-for-value. Read back the complete
 ruleset, compare it with `rules-before.json` using existing JSON and diff
-helpers, and require the DCO pair to be the only semantic change.
-
-If the new pair is already present and the old pair is absent, verify the whole
-rule and record a no-op. If both, neither, or duplicate pairs are present, stop
-for adjudication. Before merging, confirm the new required check is satisfied
-by the migration pull request's current applicable app-bound result.
+helpers, and require the DCO pair to be the only semantic change and the
+resulting pair to be new-only. Before merging, confirm the new required check is
+satisfied by the migration pull request's current applicable automated-success
+result.
 
 Merge the reviewed source change only after that readback. It removes
 `.github/workflows/dco.yml` and `scripts/check-dco.sh`; the shared repository
@@ -220,7 +246,8 @@ request.
   and protection unchanged and return the exact blocker. Separately authorized
   source preparation or publication may continue.
 - An already-correct installation, selection, configuration, or required-check
-  pair is a documented no-op. Preserve it.
+  pair is a documented no-op only after verifying the complete desired state.
+  Preserve it without mutation.
 
 If an authorized manual exception is necessary, record the actor, reason,
 check-run URL, and head SHA. The resulting success proves only manual approval.
@@ -237,9 +264,10 @@ Close the owning issue only with reviewable, secret-free receipts for:
 - absence of `.github/dco.yml` on the tested base;
 - one current-head missing-signoff human failure from app ID `1861` for each
   affected repository, under the separately reviewed fixture protocol;
-- current-head app-bound checks for the real bot-only pull request, signed-human
-  migration pull request, and retained mixed bot/signed-human pull request;
-- the recheck response and resulting applicable check;
+- current-head ordinary automated-success checks for the real bot-only pull
+  request, signed-human migration pull request, and retained mixed
+  bot/signed-human pull request;
+- the recheck response and resulting ordinary automated-success check;
 - complete ruleset readback before and after the required-check replacement;
   and
 - any manual exception, failure, no-op, or rollback action.
