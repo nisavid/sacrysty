@@ -148,6 +148,11 @@ case " $* " in
                 printf 'Error: unable to write output: resource unavailable\n' >&2
                 exit 74
                 ;;
+            abnormal)
+                # Model the helper's normalized abnormal status without signalling.
+                printf 'Error: Unsupported public key algorithm: ML-DSA-65+Ed25519\n' >&2
+                exit 137
+                ;;
             success) ;;
         esac
         ;;
@@ -245,6 +250,43 @@ exit 97
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("clean worktree", result.stderr)
         self.assertFalse(tool_log.exists(), "sq/sqv ran before tracked dirt rejection")
+
+    def test_source_inspection_failure_is_rejected_before_tool_work(self) -> None:
+        repository, environment = self.make_repository()
+        tool_log = self.install_successful_fake_tools(repository, environment)
+        real_git = shutil.which("git")
+        self.assertIsNotNone(real_git)
+        failure_bin = pathlib.Path(environment["TEST_RUNTIME"]) / "git-failure-bin"
+        failure_bin.mkdir()
+        write_executable(
+            failure_bin / "git",
+            r"""#!/bin/sh
+for argument in "$@"; do
+    if [ "$argument" = status ]; then
+        exit 71
+    fi
+done
+exec "$REAL_GIT" "$@"
+""",
+        )
+        environment.update(
+            {
+                "PATH": f"{failure_bin}{os.pathsep}{environment['PATH']}",
+                "REAL_GIT": str(real_git),
+            }
+        )
+
+        result = subprocess.run(
+            ["bash", str(repository / "conformance/run-sq.sh")],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("could not inspect source worktree", result.stderr)
+        self.assertFalse(tool_log.exists(), "sq/sqv ran after source inspection failed")
 
     def test_hostile_tool_versions_are_json_strings(self) -> None:
         repository, environment = self.make_repository()
@@ -408,6 +450,23 @@ print(hashlib.new("sha" + algorithm, pathlib.Path(path).read_bytes()).hexdigest(
         repository, environment = self.make_repository()
         self.install_successful_fake_tools(repository, environment)
         environment["FAKE_PQC_GENERATION"] = "indeterminate"
+
+        result = subprocess.run(
+            ["bash", str(repository / "conformance/run-sq.sh")],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+
+        evidence = json.loads(result.stdout)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(evidence["result"]["openpgp-rfc9980-pqc-v1"], "probe-failed")
+
+    def test_abnormal_pqc_generation_exit_is_not_unsupported(self) -> None:
+        repository, environment = self.make_repository()
+        self.install_successful_fake_tools(repository, environment)
+        environment["FAKE_PQC_GENERATION"] = "abnormal"
 
         result = subprocess.run(
             ["bash", str(repository / "conformance/run-sq.sh")],

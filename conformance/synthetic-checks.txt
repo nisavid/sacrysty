@@ -1,0 +1,11 @@
+conformance/check-domain-model.py
+conformance/test-domain-model.py
+conformance/check-fido-custody.py
+conformance/test-run-sq.py
+conformance/test-run-signing-profile.py
+conformance/test-sq-evidence-process.py
+conformance/check-source-inventory.py
+conformance/test-source-inventory.py
+conformance/test-probe-result.py
+conformance/test-strict-json.py
+conformance/test-check-conformance.py

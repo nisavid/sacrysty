@@ -14,7 +14,11 @@ elif [[ $# -ne 0 ]]; then
   exit 64
 fi
 
-if [[ -n $(git status --porcelain=v1 --untracked-files=all) ]]; then
+if ! source_status=$(git status --porcelain=v1 --untracked-files=all); then
+  printf 'conformance evidence could not inspect source worktree\n' >&2
+  exit 1
+fi
+if [[ -n $source_status ]]; then
   printf 'conformance evidence requires a clean worktree\n' >&2
   exit 1
 fi
@@ -31,18 +35,15 @@ cleanup_results() {
 trap cleanup_results EXIT
 
 active_probe_supervisor=
+active_probe_supervisor_starting=
+active_probe_supervisor_signal_sent=
 aggregate_interrupted_status=
 aggregate_signal_failure=
-interrupt_aggregate() {
-  local interrupted_status=$1
-  if [[ -n $aggregate_interrupted_status ]]; then
+signal_active_probe_supervisor() {
+  if [[ -n $active_probe_supervisor_signal_sent ]]; then
     return
   fi
-  aggregate_interrupted_status=$interrupted_status
-  if [[ -z $active_probe_supervisor ]]; then
-    trap - INT TERM
-    exit "$aggregate_interrupted_status"
-  fi
+  active_probe_supervisor_signal_sent=1
   # Bash starts the asynchronous helper with SIGINT ignored. Use the helper's
   # handled termination signal for both caller interruption paths.
   if ! kill -s TERM "$active_probe_supervisor"; then
@@ -50,34 +51,42 @@ interrupt_aggregate() {
     aggregate_signal_failure=1
   fi
 }
+interrupt_aggregate() {
+  local interrupted_status=$1
+  if [[ -n $aggregate_interrupted_status ]]; then
+    return
+  fi
+  aggregate_interrupted_status=$interrupted_status
+  if [[ -n $active_probe_supervisor_starting ]]; then
+    return
+  fi
+  if [[ -z $active_probe_supervisor ]]; then
+    trap - INT TERM
+    exit "$aggregate_interrupted_status"
+  fi
+  signal_active_probe_supervisor
+}
 trap 'interrupt_aggregate 130' INT
 trap 'interrupt_aggregate 143' TERM
 
 printf 'source_revision=%s\n' "$source_revision"
 ./scripts/check-repository.sh
 git diff --check
-python3 -B conformance/check-domain-model.py
-python3 -B -O conformance/check-domain-model.py
-python3 -B conformance/test-domain-model.py
-python3 -B -O conformance/test-domain-model.py
-python3 -B conformance/check-fido-custody.py
-python3 -B -O conformance/check-fido-custody.py
-python3 -B conformance/test-run-sq.py
-python3 -B -O conformance/test-run-sq.py
-python3 -B conformance/test-run-signing-profile.py
-python3 -B -O conformance/test-run-signing-profile.py
-python3 -B conformance/test-sq-evidence-process.py
-python3 -B -O conformance/test-sq-evidence-process.py
-python3 -B conformance/check-source-inventory.py
-python3 -B -O conformance/check-source-inventory.py
-python3 -B conformance/test-source-inventory.py
-python3 -B -O conformance/test-source-inventory.py
-python3 -B conformance/test-probe-result.py
-python3 -B -O conformance/test-probe-result.py
-python3 -B conformance/test-strict-json.py
-python3 -B -O conformance/test-strict-json.py
-python3 -B conformance/test-check-conformance.py
-python3 -B -O conformance/test-check-conformance.py
+synthetic_check_count=0
+while IFS= read -r synthetic_check || [[ -n $synthetic_check ]]; do
+  if [[ ! $synthetic_check =~ ^conformance/[a-z0-9][a-z0-9-]*\.py$ ||
+    ! -f $synthetic_check ]]; then
+    printf 'invalid synthetic check manifest entry: %s\n' "$synthetic_check" >&2
+    exit 1
+  fi
+  python3 -B "$synthetic_check"
+  python3 -B -O "$synthetic_check"
+  synthetic_check_count=$((synthetic_check_count + 1))
+done <conformance/synthetic-checks.txt
+if ((synthetic_check_count == 0)); then
+  printf 'synthetic check manifest is empty\n' >&2
+  exit 1
+fi
 
 run_and_admit_probe() {
   local kind=$1
@@ -87,9 +96,15 @@ run_and_admit_probe() {
   local runner_status_file="${output}.status"
   local runner_status
   local supervisor_status
+  active_probe_supervisor_starting=1
+  active_probe_supervisor_signal_sent=
   python3 -B "$SQ_EVIDENCE_PROCESS_HELPER" \
     probe "$runner_status_file" "$output" "$runner_stderr" -- "$runner" &
   active_probe_supervisor=$!
+  active_probe_supervisor_starting=
+  if [[ -n $aggregate_interrupted_status ]]; then
+    signal_active_probe_supervisor
+  fi
   if wait "$active_probe_supervisor"; then
     supervisor_status=0
   else

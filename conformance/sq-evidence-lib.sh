@@ -23,7 +23,14 @@ sq_evidence_require_tools() {
 sq_evidence_require_clean_source() {
   local root=$1
   local label=$2
-  if [[ -n $(git -C "$root" status --porcelain=v1 --untracked-files=all) ]]; then
+  local source_status
+  if ! source_status=$(
+    git -C "$root" status --porcelain=v1 --untracked-files=all
+  ); then
+    printf '%s evidence could not inspect source worktree\n' "$label" >&2
+    return 1
+  fi
+  if [[ -n $source_status ]]; then
     printf '%s evidence requires a clean worktree\n' "$label" >&2
     return 1
   fi

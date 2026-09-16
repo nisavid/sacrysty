@@ -31,6 +31,8 @@ with open(os.environ["SYNTHETIC_LOG"], "a", encoding="utf-8") as log:
     log.write(f"{pathlib.Path(sys.argv[0]).name}:{sys.flags.optimize}\n")
 """
 
+TEST_SYNTHETIC_CHECKS = ("fixture-check.py", "fixture-test.py")
+
 
 PROBE_STUB = r"""#!/usr/bin/env python3
 import json
@@ -44,6 +46,18 @@ sha256 = "b" * 64
 sha512 = "c" * 128
 fixture = {"bytes": 1, "sha256": sha256, "sha512": sha512}
 name = pathlib.Path(__file__).name
+with open(os.environ["AGGREGATE_PROBE_LOG"], "a", encoding="utf-8") as log:
+    log.write(name + "\n")
+if (
+    os.environ.get("FAKE_AGGREGATE_RESULT") == "startup-cancel-hang"
+    and name == "run-sq.sh"
+):
+    pathlib.Path(os.environ["AGGREGATE_SUPERVISOR_PID"]).write_text(
+        str(os.getppid())
+    )
+    pathlib.Path(os.environ["AGGREGATE_RUNNER_PID"]).write_text(str(os.getpid()))
+    while True:
+        time.sleep(1)
 if (
     os.environ.get("FAKE_AGGREGATE_RESULT") == "same-group-descendant"
     and name == "run-sq.sh"
@@ -243,24 +257,16 @@ class AggregateConformanceTests(unittest.TestCase):
         write_executable(
             repository / "scripts/check-repository.sh", "#!/bin/sh\nexit 0\n"
         )
-        for name in (
-            "check-domain-model.py",
-            "test-domain-model.py",
-            "check-fido-custody.py",
-            "test-run-sq.py",
-            "test-run-signing-profile.py",
-            "test-sq-evidence-process.py",
-            "check-source-inventory.py",
-            "test-source-inventory.py",
-            "test-probe-result.py",
-            "test-strict-json.py",
-            "test-check-conformance.py",
-        ):
+        for name in TEST_SYNTHETIC_CHECKS:
             write_executable(repository / "conformance" / name, PYTHON_STUB)
+        (repository / "conformance/synthetic-checks.txt").write_text(
+            "".join(f"conformance/{name}\n" for name in TEST_SYNTHETIC_CHECKS)
+        )
         for name in ("run-sq.sh", "run-signing-profile.sh"):
             write_executable(repository / "conformance" / name, PROBE_STUB)
 
         environment = {
+            "AGGREGATE_PROBE_LOG": str(runtime / "probe.log"),
             "GIT_CONFIG_GLOBAL": str(runtime / "missing-global-gitconfig"),
             "GIT_CONFIG_NOSYSTEM": "1",
             "HOME": str(runtime / "home"),
@@ -301,10 +307,13 @@ class AggregateConformanceTests(unittest.TestCase):
         return repository, environment
 
     def run_aggregate(
-        self, repository: pathlib.Path, environment: dict[str, str]
+        self,
+        repository: pathlib.Path,
+        environment: dict[str, str],
+        *arguments: str,
     ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            ["bash", str(repository / "scripts/check-conformance.sh")],
+            ["bash", str(repository / "scripts/check-conformance.sh"), *arguments],
             cwd=repository,
             check=False,
             capture_output=True,
@@ -322,6 +331,36 @@ class AggregateConformanceTests(unittest.TestCase):
 
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn("complete conformance checks passed", result.stdout)
+
+    def test_source_inspection_failure_stops_before_the_first_check(self) -> None:
+        repository, environment = self.make_repository()
+        real_git = shutil.which("git")
+        self.assertIsNotNone(real_git)
+        failure_bin = pathlib.Path(environment["TEST_RUNTIME"]) / "git-failure-bin"
+        write_executable(
+            failure_bin / "git",
+            r"""#!/bin/sh
+for argument in "$@"; do
+    if [ "$argument" = status ]; then
+        exit 71
+    fi
+done
+exec "$REAL_GIT" "$@"
+""",
+        )
+        environment.update(
+            {
+                "PATH": f"{failure_bin}{os.pathsep}{environment['PATH']}",
+                "REAL_GIT": str(real_git),
+            }
+        )
+
+        result = self.run_aggregate(repository, environment)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("could not inspect source worktree", result.stderr)
+        self.assertFalse(pathlib.Path(environment["SYNTHETIC_LOG"]).exists())
+        self.assertFalse(pathlib.Path(environment["AGGREGATE_PROBE_LOG"]).exists())
 
     def test_valid_json_from_nonzero_runner_is_never_announced_as_admitted(
         self,
@@ -448,6 +487,91 @@ class AggregateConformanceTests(unittest.TestCase):
                     requested_signal, signal_group=signal_group
                 )
 
+    def assert_startup_interruption_reaps_registered_probe(
+        self, requested_signal: signal.Signals
+    ) -> None:
+        repository, environment = self.make_repository()
+        runtime = pathlib.Path(environment["TEST_RUNTIME"])
+        barrier_once = runtime / "startup-barrier.once"
+        barrier_ready = runtime / "startup-barrier.ready"
+        barrier_release = runtime / "startup-barrier.release"
+        supervisor_pid_path = runtime / "startup-supervisor.pid"
+        runner_pid_path = runtime / "startup-runner.pid"
+        bash_environment = runtime / "startup-barrier.bash"
+        bash_environment.write_text(
+            r"""set -T
+aggregate_startup_barrier() {
+  if [[ $BASH_COMMAND == 'active_probe_supervisor=$!' \
+    && ! -e $AGGREGATE_STARTUP_BARRIER_ONCE ]]; then
+    : >"$AGGREGATE_STARTUP_BARRIER_ONCE"
+    : >"$AGGREGATE_STARTUP_BARRIER_READY"
+    while [[ ! -e $AGGREGATE_STARTUP_BARRIER_RELEASE ]]; do
+      sleep 0.01
+    done
+  fi
+}
+trap aggregate_startup_barrier DEBUG
+"""
+        )
+        environment.update(
+            {
+                "AGGREGATE_RUNNER_PID": str(runner_pid_path),
+                "AGGREGATE_STARTUP_BARRIER_ONCE": str(barrier_once),
+                "AGGREGATE_STARTUP_BARRIER_READY": str(barrier_ready),
+                "AGGREGATE_STARTUP_BARRIER_RELEASE": str(barrier_release),
+                "AGGREGATE_SUPERVISOR_PID": str(supervisor_pid_path),
+                "BASH_ENV": str(bash_environment),
+                "FAKE_AGGREGATE_RESULT": "startup-cancel-hang",
+            }
+        )
+        aggregate = subprocess.Popen(
+            ["bash", str(repository / "scripts/check-conformance.sh")],
+            cwd=repository,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=environment,
+            start_new_session=True,
+        )
+        self.addCleanup(
+            clean_aggregate_process,
+            aggregate,
+            (supervisor_pid_path, runner_pid_path),
+        )
+        deadline = time.monotonic() + 5
+        while (
+            not barrier_ready.is_file() or not runner_pid_path.is_file()
+        ) and time.monotonic() < deadline:
+            if aggregate.poll() is not None:
+                break
+            time.sleep(0.01)
+        self.assertTrue(barrier_ready.is_file(), "startup barrier was not reached")
+        self.assertTrue(runner_pid_path.is_file(), "probe runner did not start")
+        supervisor_pid = int(supervisor_pid_path.read_text())
+        runner_pid = int(runner_pid_path.read_text())
+        self.assertEqual(os.getpgid(aggregate.pid), aggregate.pid)
+        self.assertEqual(os.getpgid(supervisor_pid), aggregate.pid)
+        self.assertEqual(os.getpgid(runner_pid), runner_pid)
+
+        os.kill(aggregate.pid, requested_signal)
+        barrier_release.touch()
+        aggregate.wait(timeout=5)
+
+        self.assertEqual(aggregate.returncode, 128 + requested_signal)
+        self.assert_process_gone(supervisor_pid)
+        self.assert_process_gone(runner_pid)
+        aggregate_stdout, aggregate_stderr = aggregate.communicate(timeout=2)
+        self.assertNotIn("complete conformance checks passed", aggregate_stdout)
+        self.assertIn("sq evidence probe process interrupted", aggregate_stderr)
+
+    def test_startup_interruption_reaps_the_registered_probe(self) -> None:
+        for requested_signal in (signal.SIGINT, signal.SIGTERM):
+            with self.subTest(requested_signal):
+                self.assert_startup_interruption_reaps_registered_probe(
+                    requested_signal
+                )
+
     def test_complete_aggregate_runs_synthetic_checks_in_both_modes(self) -> None:
         repository, environment = self.make_repository()
 
@@ -458,24 +582,31 @@ class AggregateConformanceTests(unittest.TestCase):
         for line in pathlib.Path(environment["SYNTHETIC_LOG"]).read_text().splitlines():
             name, optimized = line.split(":")
             observations.setdefault(name, set()).add(int(optimized))
-        for name in (
-            "check-domain-model.py",
-            "test-domain-model.py",
-            "check-fido-custody.py",
-            "test-run-sq.py",
-            "test-run-signing-profile.py",
-            "test-sq-evidence-process.py",
-            "check-source-inventory.py",
-            "test-source-inventory.py",
-            "test-probe-result.py",
-            "test-strict-json.py",
-            "test-check-conformance.py",
-        ):
+        for name in TEST_SYNTHETIC_CHECKS:
             self.assertEqual(observations.get(name), {0, 1}, name)
+        self.assertEqual(
+            pathlib.Path(environment["AGGREGATE_PROBE_LOG"]).read_text().splitlines(),
+            ["run-sq.sh", "run-signing-profile.sh"],
+        )
         temporary_results = list(
             pathlib.Path(environment["TMPDIR"]).glob("sacrysty-conformance-results.*")
         )
         self.assertEqual(temporary_results, [])
+
+    def test_synthetic_only_runs_manifest_checks_without_probe_invocation(self) -> None:
+        repository, environment = self.make_repository()
+
+        result = self.run_aggregate(repository, environment, "--synthetic-only")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        observations: dict[str, set[int]] = {}
+        for line in pathlib.Path(environment["SYNTHETIC_LOG"]).read_text().splitlines():
+            name, optimized = line.split(":")
+            observations.setdefault(name, set()).add(int(optimized))
+        self.assertEqual(observations, {name: {0, 1} for name in TEST_SYNTHETIC_CHECKS})
+        self.assertFalse(pathlib.Path(environment["AGGREGATE_PROBE_LOG"]).exists())
+        self.assertIn("crypto-tool probes not run: synthetic-only mode", result.stdout)
+        self.assertIn("synthetic conformance checks passed", result.stdout)
 
 
 if __name__ == "__main__":

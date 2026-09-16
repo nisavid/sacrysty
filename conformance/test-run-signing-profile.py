@@ -268,6 +268,35 @@ class SigningProfileRunnerTests(unittest.TestCase):
         self.assertIn("clean worktree", result.stderr)
         self.assertFalse(pathlib.Path(environment["FAKE_TOOL_LOG"]).exists())
 
+    def test_source_inspection_failure_is_rejected_before_tool_execution(self) -> None:
+        repository, environment = self.make_repository()
+        real_git = shutil.which("git")
+        self.assertIsNotNone(real_git)
+        failure_bin = pathlib.Path(environment["TEST_RUNTIME"]) / "git-failure-bin"
+        write_executable(
+            failure_bin / "git",
+            r"""#!/bin/sh
+for argument in "$@"; do
+    if [ "$argument" = status ]; then
+        exit 71
+    fi
+done
+exec "$REAL_GIT" "$@"
+""",
+        )
+        environment.update(
+            {
+                "PATH": f"{failure_bin}{os.pathsep}{environment['PATH']}",
+                "REAL_GIT": str(real_git),
+            }
+        )
+
+        result = self.run_runner(repository, environment)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("could not inspect source worktree", result.stderr)
+        self.assertFalse(pathlib.Path(environment["FAKE_TOOL_LOG"]).exists())
+
     def test_stderr_flood_fails_instead_of_becoming_probe_evidence(self) -> None:
         repository, environment = self.make_repository()
         environment["FAKE_TOOL_FAULT"] = "stderr-flood"

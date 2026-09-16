@@ -154,8 +154,9 @@ if (( pqc_generation_status == 0 )); then
   else
     pqc_result=round-trip-failed
   fi
-elif recognized_pqc_capability_rejection \
-  "$work_dir/pqc.stdout" "$work_dir/pqc.stderr"; then
+elif ((pqc_generation_status < 124)) &&
+  recognized_pqc_capability_rejection \
+    "$work_dir/pqc.stdout" "$work_dir/pqc.stderr"; then
   pqc_result=unsupported
   pqc_probe_status=0
 fi

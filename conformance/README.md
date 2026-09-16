@@ -27,8 +27,13 @@ Each check is also available separately:
 | `python3 conformance/test-sq-evidence-process.py` | Process bounds shared by the probe runners and aggregate | Constructed timeout, output, file-growth, exit-status, interruption, cleanup-denial, and ordinary same-process-group cases. |
 | `python3 conformance/check-fido-custody.py` | Synthetic one-shot custody workers | Success and failure paths; no authenticator, plugin, native-library, or production qualification. |
 | `python3 conformance/check-source-inventory.py` | Producer commits and every inventoried source path | Complete Git object history, ancestry, tree membership, modes, blobs, byte lengths, and hashes; no hosted availability or review claim. |
+| `python3 conformance/test-source-inventory.py` | Source-inventory identity and history failure behavior | Checked-in inventory plus constructed identity, path-set, and shallow-history failures. |
 | `python3 conformance/check-probe-result.py <crypto-conformance\|signing-profile> <result.json> <revision>` | Captured crypto-probe JSON | Required result identity, source binding, profile result, diagnostics, and mandatory check values; no qualification beyond the admitted observation. |
-| `python3 conformance/test-check-conformance.py` | Aggregate runner and admission order | Constructed runner results, statuses, size limits, cancellation with a nested selected session, and ordinary same-process-group cleanup. |
+| `python3 conformance/test-probe-result.py` | Crypto-probe result admission behavior | Constructed complete, malformed, mismatched, nonpositive, and false-check results; no cryptographic capability claim. |
+| `python3 conformance/test-check-conformance.py` | Aggregate runner and admission order | Constructed source-inspection failures, runner results, statuses, size limits, startup and nested cancellation, and ordinary same-process-group cleanup. |
+
+The aggregate's internal synthetic-check sequence is defined once in
+`synthetic-checks.txt`. Every listed check runs in normal and optimized Python.
 
 The crypto probes generate disposable key material in temporary directories
 and disable default key and certificate stores. Every selected `sq` or `sqv`
