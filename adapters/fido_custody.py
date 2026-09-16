@@ -12,6 +12,7 @@ adapter.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -91,17 +92,20 @@ def _close_pipe(pipe: BinaryIO) -> None:
 
 
 def _terminate_and_reap(process: subprocess.Popen[bytes]) -> None:
-    """Kill the worker group, close inherited pipes, and boundedly reap its leader."""
+    """Request group termination, close pipes, and boundedly attempt leader reaping."""
 
+    group_cleanup_error: OSError | None = None
     try:
         os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    except OSError:
-        try:
-            process.kill()
-        except OSError:
-            pass
+    except OSError as exc:
+        if exc.errno != errno.ESRCH:
+            group_cleanup_error = exc
+            # A leader-only fallback cannot establish descendant cleanup. Try it
+            # for bounded cleanup, but retain the group failure for the caller.
+            try:
+                process.kill()
+            except OSError:
+                pass
 
     for pipe in (process.stdin, process.stdout, process.stderr):
         if pipe is not None:
@@ -109,19 +113,20 @@ def _terminate_and_reap(process: subprocess.Popen[bytes]) -> None:
 
     try:
         process.wait(timeout=0.5)
-        return
     except subprocess.TimeoutExpired:
-        pass
-    try:
-        process.kill()
-    except OSError:
-        pass
-    try:
-        process.wait(timeout=0.5)
-    except subprocess.TimeoutExpired:
-        # An uninterruptible leader cannot be reaped synchronously. Returning
-        # remains bounded and the public operation still fails closed.
-        pass
+        try:
+            process.kill()
+        except OSError:
+            pass
+        try:
+            process.wait(timeout=0.5)
+        except subprocess.TimeoutExpired:
+            # An uninterruptible leader cannot be reaped synchronously. Returning
+            # remains bounded and the public operation still fails closed.
+            pass
+
+    if group_cleanup_error is not None:
+        raise CustodyError("worker cleanup failure") from group_cleanup_error
 
 
 def _bounded_communicate(
@@ -174,9 +179,6 @@ def _bounded_communicate(
                             pipe.fileno(),
                             input_bytes[input_offset : input_offset + 65536],
                         )
-                    except BrokenPipeError:
-                        unregister_and_close(pipe)
-                        continue
                     except BlockingIOError:
                         continue
                     input_offset += written
@@ -238,40 +240,43 @@ class OneShotCustodyAdapter:
             raise CustodyError("empty envelope")
         if len(request.envelope) > self._max_envelope_bytes:
             raise CustodyError("envelope too large")
+        process: subprocess.Popen[bytes] | None = None
         try:
-            process = subprocess.Popen(
-                self._command,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=self._environment,
-                close_fds=True,
-                start_new_session=True,
-            )
-        except OSError as exc:
-            raise CustodyError("worker unavailable") from exc
-        try:
-            stdout, _stderr = _bounded_communicate(
-                process,
-                request.envelope,
-                self._timeout_seconds,
-                self._max_output_bytes,
-            )
-        except _WorkerTimedOut as exc:
-            _terminate_and_reap(process)
-            raise CustodyError("worker timeout") from exc
-        except _OutputLimitExceeded as exc:
-            _terminate_and_reap(process)
-            if exc.stream_name == "stderr":
-                raise CustodyError("worker stderr too large") from exc
-            raise CustodyError("worker output too large") from exc
-        except OSError as exc:
-            _terminate_and_reap(process)
-            raise CustodyError("worker I/O failure") from exc
-        # The leader may have exited after producing a complete response while
-        # an ordinary same-group descendant remains. Reap the whole one-shot
-        # process group before interpreting or returning the response.
-        _terminate_and_reap(process)
+            try:
+                process = subprocess.Popen(
+                    self._command,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=self._environment,
+                    close_fds=True,
+                    start_new_session=True,
+                )
+            except OSError as exc:
+                raise CustodyError("worker unavailable") from exc
+            try:
+                stdout, _stderr = _bounded_communicate(
+                    process,
+                    request.envelope,
+                    self._timeout_seconds,
+                    self._max_output_bytes,
+                )
+            except _WorkerTimedOut as exc:
+                raise CustodyError("worker timeout") from exc
+            except _OutputLimitExceeded as exc:
+                if exc.stream_name == "stderr":
+                    raise CustodyError("worker stderr too large") from exc
+                raise CustodyError("worker output too large") from exc
+            except OSError as exc:
+                raise CustodyError("worker I/O failure") from exc
+        finally:
+            if process is not None:
+                # The leader may have exited while an ordinary same-group
+                # descendant remains. Every completion path requests group
+                # termination and bounded leader reaping.
+                _terminate_and_reap(process)
+        if process is None:
+            raise CustodyError("worker unavailable")
         if process.returncode != 0:
             raise CustodyError("worker failure")
         try:

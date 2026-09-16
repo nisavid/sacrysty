@@ -26,11 +26,15 @@ extensions. Invalid shapes and unsupported inputs fail even when Python
 optimization is enabled.
 
 The synthetic custody adapter bounds input, both output streams, and waiting
-time. Every completion path terminates ordinary same-process-group descendants
-and boundedly reaps the worker leader. Duplicate response fields are rejected.
-Test controls belong to disposable workers, rather than the adapter's
-environment forwarding policy. A process group is not a sandbox for a worker
-that deliberately escapes it.
+time. After worker creation, every completion path requests termination of
+ordinary same-process-group descendants and boundedly attempts to reap the
+worker leader. The adapter returns no plaintext result when the operating
+system reports a group-cleanup error other than an already absent process
+group. This fail-closed result does not establish operating-system cleanup
+after a kernel denial. Duplicate response fields are rejected. Test controls
+belong to disposable workers, rather than the adapter's environment forwarding
+policy. A process group is not a sandbox for a worker that deliberately escapes
+it.
 
 The crypto probes record observed behavior for the selected standard tools.
 They require clean source, portable hash tools, admitted JSON results, and
