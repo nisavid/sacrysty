@@ -11,7 +11,7 @@ test_source_identity_rejection() {
     return 1
   fi
   grep -F \
-    'source revision mismatch: expected 5a5a608b0123854a066550a89a53e830a124befa' \
+    'source revision mismatch: expected 001099750319aa47ca12b4e7466990577e9ced17' \
     "$output_file" >/dev/null
 }
 
