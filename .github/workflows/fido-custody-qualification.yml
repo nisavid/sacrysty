@@ -1,0 +1,90 @@
+name: FIDO custody candidate qualification
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: fido-custody-qualification-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic:
+    name: Candidate synthetic (${{ matrix.runner }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-x86_64
+            runner: ubuntu-24.04
+            arch: x86_64
+            runner_os: Linux
+            runner_arch: X64
+          - id: macos-arm64
+            runner: macos-15
+            arch: arm64
+            runner_os: macOS
+            runner_arch: ARM64
+    env:
+      EXPECTED_ARCH: ${{ matrix.arch }}
+      IMPLEMENTATION_ROOT: ${{ github.workspace }}/qualification-implementation
+      SOURCE_ROOT: ${{ github.workspace }}/frozen-synthetic-source
+      SACRYSTY_EXPECTED_RUNNER_ARCH: ${{ matrix.runner_arch }}
+      SACRYSTY_EXPECTED_RUNNER_OS: ${{ matrix.runner_os }}
+      SACRYSTY_RUNNER_LABEL: ${{ matrix.runner }}
+      SACRYSTY_WORKFLOW_REF: ${{ github.workflow_ref }}
+      SACRYSTY_WORKFLOW_SHA: ${{ github.workflow_sha }}
+    steps:
+      - name: Checkout the workflow implementation revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: qualification-implementation
+          persist-credentials: false
+
+      - name: Checkout the frozen synthetic source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: nisavid/sacrysty
+          ref: 5a5a608b0123854a066550a89a53e830a124befa
+          path: frozen-synthetic-source
+          persist-credentials: false
+
+      - name: Run candidate-bound direct synthetic checks
+        shell: bash
+        env:
+          RESULT_FILE: ${{ runner.temp }}/sacrysty-fido-qualification/${{ matrix.id }}/result.json
+          TMPDIR: ${{ runner.temp }}/sacrysty-fido-qualification/${{ matrix.id }}/tmp
+        run: |
+          set -euo pipefail
+          test "$IMPLEMENTATION_ROOT" != "$SOURCE_ROOT"
+          mkdir -p "$TMPDIR" "${RESULT_FILE%/*}"
+          bash "$IMPLEMENTATION_ROOT/qualification/fido-custody/run-synthetic-ci.sh" \
+            "$SOURCE_ROOT" "$RESULT_FILE" "$EXPECTED_ARCH"
+
+      - name: Retain the value-free provisional result
+        if: ${{ always() }}
+        shell: bash
+        env:
+          RESULT_FILE: ${{ runner.temp }}/sacrysty-fido-qualification/${{ matrix.id }}/result.json
+        run: |
+          set -euo pipefail
+          if [[ -f "$RESULT_FILE" ]]; then
+            cat "$RESULT_FILE"
+            {
+              printf '### Candidate-bound FIDO synthetic result\n\n'
+              printf '```json\n'
+              cat "$RESULT_FILE"
+              printf '```\n'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf 'No provisional result was produced; inspect the failed preflight.\n'
+          fi
