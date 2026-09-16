@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly expected_source_revision=001099750319aa47ca12b4e7466990577e9ced17
+readonly expected_source_revision=26d760826611e39e57757ae5b8ca428b1a6ffb43
 readonly expected_public_inputs_manifest=4fa2c5ba1f9795c9c6fb63f11e342702e6e22cd3225d94ad8dd4a8130685a574
 readonly expected_primary_sources_manifest=7d20b934f9c5acda27e914336db0e01eed8693bf5253e8f42104f3df75214e8e
 
@@ -63,20 +63,22 @@ main() {
     exit 1
   fi
 
+  verify_digest adapters/fido_custody.py \
+    2c2340a10bd6f53c044d6ace4d0205d4a8cff538c4e2db038088810d74b0b63e
+  verify_digest adapters/fido-custody-v1.md \
+    9d037a6ef9b84eaddf103cd05c9fc5bc336a5d393bcd0dc57fb01387c51a3c4d
+  verify_digest conformance/check-fido-custody.py \
+    08654685f99ab3603993dd4473709cd14ec692992ed705f51a1fa0326430fe40
+  verify_digest conformance/test_support.py \
+    45ff4ac487816dbe76652bf81f38ebd3caae89b1fd59ea16a3a094e8649ab067
+  verify_digest conformance/strict_json.py \
+    505557305f5cd7033f3a082952b917275cc04cea643c7a709306fc461675b4ac
+
   source_status_before=$(git -C "$source_root" status --porcelain=v1 --untracked-files=all)
   if [[ -n $source_status_before ]]; then
     printf 'source checkout is not clean before checks\n' >&2
     exit 1
   fi
-
-  verify_digest adapters/fido_custody.py \
-    c8b3dcb5c1ce395393d10f4621cd4e478e1d08202485f41848943163a96ba690
-  verify_digest adapters/fido-custody-v1.md \
-    9d037a6ef9b84eaddf103cd05c9fc5bc336a5d393bcd0dc57fb01387c51a3c4d
-  verify_digest conformance/check-fido-custody.py \
-    3124257c09af05d7325d1ffb4cb5397456355591485b1739a39fcd2b94c397c1
-  verify_digest conformance/test_support.py \
-    45ff4ac487816dbe76652bf81f38ebd3caae89b1fd59ea16a3a094e8649ab067
 
   observed_arch=$(uname -m)
   if [[ $observed_arch != "$expected_arch" ]]; then
@@ -210,10 +212,11 @@ record = {
         "clean_before": True,
         "clean_after": clean_after,
         "sha256": {
-            "adapters/fido_custody.py": "c8b3dcb5c1ce395393d10f4621cd4e478e1d08202485f41848943163a96ba690",
+            "adapters/fido_custody.py": "2c2340a10bd6f53c044d6ace4d0205d4a8cff538c4e2db038088810d74b0b63e",
             "adapters/fido-custody-v1.md": "9d037a6ef9b84eaddf103cd05c9fc5bc336a5d393bcd0dc57fb01387c51a3c4d",
-            "conformance/check-fido-custody.py": "3124257c09af05d7325d1ffb4cb5397456355591485b1739a39fcd2b94c397c1",
+            "conformance/check-fido-custody.py": "08654685f99ab3603993dd4473709cd14ec692992ed705f51a1fa0326430fe40",
             "conformance/test_support.py": "45ff4ac487816dbe76652bf81f38ebd3caae89b1fd59ea16a3a094e8649ab067",
+            "conformance/strict_json.py": "505557305f5cd7033f3a082952b917275cc04cea643c7a709306fc461675b4ac",
         },
     },
     "preparation_receipts": {
