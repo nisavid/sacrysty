@@ -7,6 +7,7 @@ import errno
 import fcntl
 import os
 import pathlib
+import select
 import signal
 import stat
 import subprocess
@@ -45,11 +46,12 @@ if case == "complete-input":
 if case == "interrupt":
     directory = os.path.dirname(__file__)
     with open(os.path.join(directory, "interrupt-worker-pid"), "w") as marker:
-        marker.write(str(os.getpid()))
+        marker.write(f"{os.getpid()}\n")
     child_marker = os.path.join(directory, "interrupt-child-pid")
     child = (
         "import os,pathlib,time; "
-        f"pathlib.Path({child_marker!r}).write_text(str(os.getpid()), encoding='ascii'); "
+        f"pathlib.Path({child_marker!r}).write_text("
+        "str(os.getpid()) + '\\n', encoding='ascii'); "
         "time.sleep(10)"
     )
     subprocess.Popen([sys.executable, "-c", child])
@@ -169,6 +171,28 @@ else:
 """
 
 
+PID_MARKER_PRODUCER = r"""#!/usr/bin/env python3
+import os, pathlib, sys
+
+marker = pathlib.Path(sys.argv[1])
+records = (
+    ("empty", b""),
+    ("malformed", b"not-a-pid\n"),
+    ("partial", str(os.getpid()).encode("ascii")),
+    ("complete", f"{os.getpid()}\n".encode("ascii")),
+)
+with marker.open("wb", buffering=0) as stream:
+    for label, record in records:
+        stream.seek(0)
+        stream.truncate()
+        stream.write(record)
+        sys.stdout.write(label + "\n")
+        sys.stdout.flush()
+        if sys.stdin.buffer.read(1) != b"+":
+            raise SystemExit(21)
+"""
+
+
 def expect_failure(
     adapter: OneShotCustodyAdapter,
     request: CustodyRequest,
@@ -201,14 +225,41 @@ def require(condition: bool, diagnostic: str) -> None:
         raise AssertionError(diagnostic)
 
 
+def read_complete_pid_marker(marker: pathlib.Path) -> int | None:
+    try:
+        record = marker.read_bytes()
+    except OSError:
+        return None
+    if not record.endswith(b"\n"):
+        return None
+    encoded_pid = record[:-1]
+    if not encoded_pid.isdigit():
+        return None
+    try:
+        pid = int(encoded_pid)
+    except ValueError:
+        return None
+    if pid <= 0 or str(pid).encode("ascii") != encoded_pid:
+        return None
+    return pid
+
+
 def wait_for_markers(
     markers: tuple[pathlib.Path, ...],
     process: subprocess.Popen[bytes],
     *,
     timeout_seconds: float,
-) -> None:
+) -> tuple[int, ...]:
     deadline = time.monotonic() + timeout_seconds
-    while not all(marker.is_file() for marker in markers):
+    while True:
+        pids: list[int] = []
+        for marker in markers:
+            pid = read_complete_pid_marker(marker)
+            if pid is None:
+                break
+            pids.append(pid)
+        else:
+            return tuple(pids)
         if process.poll() is not None:
             _stdout, stderr = process.communicate()
             raise AssertionError(
@@ -218,6 +269,91 @@ def wait_for_markers(
         if time.monotonic() >= deadline:
             raise AssertionError("interruption worker group did not become ready")
         time.sleep(0.01)
+
+
+def require_pid_marker_producer_state(
+    producer: subprocess.Popen[bytes], state: str
+) -> None:
+    require(producer.stdout is not None, "PID marker producer stdout was not piped")
+    readable, _writable, _exceptional = select.select(
+        (producer.stdout,), (), (), 2.0
+    )
+    require(bool(readable), f"PID marker producer did not reach its {state} barrier")
+    observed_state = producer.stdout.readline()
+    require(
+        observed_state == f"{state}\n".encode("ascii"),
+        f"PID marker producer did not publish its {state} barrier",
+    )
+
+
+class ReadinessMarkerProbe:
+    def __init__(
+        self,
+        marker: pathlib.Path,
+        producer: subprocess.Popen[bytes],
+    ) -> None:
+        self.marker = marker
+        self.producer = producer
+        self.records_read = 0
+        self.complete_record_read = False
+        self.transitions = (
+            ("empty", b"", "malformed"),
+            ("malformed", b"not-a-pid\n", "partial"),
+            ("partial", str(producer.pid).encode("ascii"), "complete"),
+        )
+
+    def is_file(self) -> bool:
+        # Keep the regression red against an existence-only readiness predicate.
+        return self.marker.is_file()
+
+    def read_bytes(self) -> bytes:
+        record = self.marker.read_bytes()
+        self.records_read += 1
+        if self.records_read <= len(self.transitions):
+            state, expected_record, next_state = self.transitions[self.records_read - 1]
+            require(record == expected_record, f"producer left its {state} barrier")
+            require(self.producer.stdin is not None, "PID marker producer stdin closed")
+            self.producer.stdin.write(b"+")
+            self.producer.stdin.flush()
+            require_pid_marker_producer_state(self.producer, next_state)
+        else:
+            self.complete_record_read = True
+        return record
+
+
+def check_pid_marker_readiness(directory: pathlib.Path) -> None:
+    marker = directory / "readiness-producer-pid"
+    producer = subprocess.Popen(
+        [sys.executable, "-B", "-c", PID_MARKER_PRODUCER, str(marker)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={"PATH": os.environ["PATH"], "PYTHONDONTWRITEBYTECODE": "1"},
+        close_fds=True,
+    )
+    try:
+        require(producer.stdin is not None, "PID marker producer stdin was not piped")
+        require_pid_marker_producer_state(producer, "empty")
+        marker_probe = ReadinessMarkerProbe(marker, producer)
+        pids = wait_for_markers((marker_probe,), producer, timeout_seconds=3.0)
+        require(marker_probe.records_read > 0, "empty PID marker was accepted as ready")
+        require(
+            marker_probe.complete_record_read,
+            "readiness returned before the complete PID marker was read",
+        )
+        require(
+            pids == (producer.pid,),
+            "complete PID marker was not returned from readiness",
+        )
+        producer.stdin.write(b"+")
+        producer.stdin.flush()
+        _stdout, stderr = producer.communicate(timeout=2.0)
+        require(producer.returncode == 0, "PID marker producer failed")
+        require(stderr == b"", "PID marker producer wrote unexpected stderr")
+    finally:
+        if producer.poll() is None:
+            producer.kill()
+        producer.communicate(timeout=2.0)
 
 
 def process_group_exists(process_group: int) -> bool:
@@ -260,6 +396,7 @@ def default_pipe_capacity() -> int | None:
 def main() -> None:
     request = request_for()
     with external_temporary_directory(ROOT, prefix="sacrysty-fido-test-") as directory:
+        check_pid_marker_readiness(pathlib.Path(directory))
         worker = pathlib.Path(directory) / "worker.py"
         worker.write_text(WORKER)
         worker.chmod(worker.stat().st_mode | stat.S_IXUSR)
@@ -498,13 +635,11 @@ def main() -> None:
                 env={"PATH": os.environ["PATH"], "PYTHONDONTWRITEBYTECODE": "1"},
                 close_fds=True,
             )
-            wait_for_markers(
+            worker_pid, child_pid = wait_for_markers(
                 (worker_pid_marker, child_pid_marker),
                 interrupted_process,
                 timeout_seconds=3.0,
             )
-            worker_pid = int(worker_pid_marker.read_text(encoding="ascii"))
-            child_pid = int(child_pid_marker.read_text(encoding="ascii"))
             require(
                 os.getpgid(worker_pid) == worker_pid,
                 "interruption worker did not lead its fresh process group",
@@ -539,10 +674,10 @@ def main() -> None:
                 except subprocess.TimeoutExpired:
                     interrupted_process.kill()
                     interrupted_process.communicate(timeout=2.0)
-            if worker_pid is None and worker_pid_marker.is_file():
-                worker_pid = int(worker_pid_marker.read_text(encoding="ascii"))
-            if child_pid is None and child_pid_marker.is_file():
-                child_pid = int(child_pid_marker.read_text(encoding="ascii"))
+            if worker_pid is None:
+                worker_pid = read_complete_pid_marker(worker_pid_marker)
+            if child_pid is None:
+                child_pid = read_complete_pid_marker(child_pid_marker)
             if worker_pid is not None:
                 kill_process_group(worker_pid)
             if child_pid is not None:
