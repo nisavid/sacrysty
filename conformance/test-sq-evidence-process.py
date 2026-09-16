@@ -558,12 +558,19 @@ class SqEvidenceProcessTests(unittest.TestCase):
         ) as directory:
             root = pathlib.Path(directory)
             child_pid_path = root / "child-pid"
+            term_observed_path = root / "term-observed"
             child_program = (
-                "import os, pathlib, time\n"
+                "import os, pathlib, signal, time\n"
+                "def exit_on_term(_number, _frame):\n"
+                f"    pathlib.Path({str(term_observed_path)!r})"
+                ".write_text(str(os.getpid()))\n"
+                "    os._exit(0)\n"
+                "signal.signal(signal.SIGTERM, exit_on_term)\n"
                 f"pathlib.Path({str(child_pid_path)!r})"
                 ".write_text(f'{os.getpid()}:{os.getpgrp()}')\n"
-                "while True:\n"
-                "    time.sleep(1)\n"
+                "deadline = time.monotonic() + 5\n"
+                "while time.monotonic() < deadline:\n"
+                "    time.sleep(0.1)\n"
             )
             script = root / "spawn-child.py"
             script.write_text(
@@ -587,27 +594,57 @@ class SqEvidenceProcessTests(unittest.TestCase):
             )
             outputs = self.make_paths(directory)
             real_killpg = os.killpg
-            post_terminate_denials = 2
-            cleanup_signals: list[int] = []
+            remaining_transient_check_denials = 2
+            cleanup_signal_attempts: list[int] = []
+            returned_group_signal_calls: list[int] = []
+            denied_group_signal_calls: list[int] = []
+            call_observations: list[tuple[int, bool]] = []
             definitive_absence_observed = False
 
-            def construct_xnu_zombie_only_return_sequence(
+            def construct_denied_kill_then_transient_checks(
                 process_group: int, requested_signal: int
             ) -> None:
-                nonlocal definitive_absence_observed, post_terminate_denials
+                nonlocal definitive_absence_observed
+                nonlocal remaining_transient_check_denials
+                try:
+                    leader_status = os.waitid(
+                        os.P_PID,
+                        process_group,
+                        os.WEXITED | os.WNOHANG | os.WNOWAIT,
+                    )
+                except ChildProcessError:
+                    leader_is_owned = False
+                else:
+                    leader_is_owned = leader_status is not None
+                call_observations.append((requested_signal, leader_is_owned))
+
                 if requested_signal != 0:
+                    if not leader_is_owned:
+                        raise AssertionError(
+                            "refusing a cleanup signal without leader ownership"
+                        )
+                    cleanup_signal_attempts.append(requested_signal)
+                    if requested_signal == signal.SIGKILL:
+                        denied_group_signal_calls.append(requested_signal)
+                        raise PermissionError(errno.EPERM, "constructed SIGKILL denial")
                     real_killpg(process_group, requested_signal)
-                    cleanup_signals.append(requested_signal)
+                    returned_group_signal_calls.append(requested_signal)
+                    deadline = time.monotonic() + 2
+                    while (
+                        not term_observed_path.is_file() and time.monotonic() < deadline
+                    ):
+                        time.sleep(0.01)
+                    if not term_observed_path.is_file():
+                        raise AssertionError("child did not observe SIGTERM")
                     return
-                # This constructs only the userspace return sequence from the
-                # macOS failure; Linux is not reproducing XNU kernel behavior.
-                if (
-                    cleanup_signals == [signal.SIGTERM, signal.SIGKILL]
-                    and post_terminate_denials
-                ):
-                    post_terminate_denials -= 1
+                if leader_is_owned:
+                    raise AssertionError("group check preceded leader reaping")
+                # This constructs only a userspace return sequence. Linux is not
+                # reproducing the hosted macOS kernel or scheduler cause.
+                if remaining_transient_check_denials:
+                    remaining_transient_check_denials -= 1
                     raise PermissionError(
-                        errno.EPERM, "constructed zombie-only process group"
+                        errno.EPERM, "constructed transient group-check denial"
                     )
                 try:
                     real_killpg(process_group, requested_signal)
@@ -621,7 +658,7 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 with mock.patch.object(
                     process_boundary.os,
                     "killpg",
-                    construct_xnu_zombie_only_return_sequence,
+                    construct_denied_kill_then_transient_checks,
                 ):
                     child_status = process_boundary.run_process(
                         "tool", outputs, [sys.executable, str(script)]
@@ -631,16 +668,32 @@ class SqEvidenceProcessTests(unittest.TestCase):
                     child_pid, child_group = map(
                         int, child_pid_path.read_text().split(":")
                     )
-                    self.addCleanup(_terminate_if_alive, child_pid)
             self.assertEqual(child_status, 0)
-            self.assertEqual(cleanup_signals, [signal.SIGTERM, signal.SIGKILL])
-            self.assertEqual(post_terminate_denials, 0)
+            self.assertEqual(cleanup_signal_attempts, [signal.SIGTERM, signal.SIGKILL])
+            self.assertEqual(denied_group_signal_calls, [signal.SIGKILL])
+            self.assertEqual(remaining_transient_check_denials, 0)
             self.assertTrue(definitive_absence_observed)
+            self.assertEqual(
+                call_observations[:2],
+                [(signal.SIGTERM, True), (signal.SIGKILL, True)],
+            )
+            self.assertTrue(
+                all(
+                    requested_signal == 0 and not leader_is_owned
+                    for requested_signal, leader_is_owned in call_observations[2:]
+                ),
+                "helper signalled after reaping the owned leader",
+            )
             self.assertIsNotNone(child_pid)
             self.assertIsNotNone(child_group)
+            self.assertEqual(term_observed_path.read_text(), str(child_pid))
             self.assertNotEqual(child_pid, child_group)
             self.assertNotEqual(child_group, os.getpgrp())
             self.assert_process_gone(int(child_pid))
+            self.assertEqual(
+                returned_group_signal_calls,
+                [signal.SIGTERM],
+            )
 
     def test_persistent_eperm_check_is_bounded_and_never_admitted(self) -> None:
         with external_temporary_directory(
