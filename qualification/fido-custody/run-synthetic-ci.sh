@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly expected_source_revision=26d760826611e39e57757ae5b8ca428b1a6ffb43
+readonly expected_source_revision=c3f87d3d07ce083ddcfe2ec3bc4f971d621c6457
 readonly expected_public_inputs_manifest=4fa2c5ba1f9795c9c6fb63f11e342702e6e22cd3225d94ad8dd4a8130685a574
 readonly expected_primary_sources_manifest=7d20b934f9c5acda27e914336db0e01eed8693bf5253e8f42104f3df75214e8e
 
@@ -64,11 +64,11 @@ main() {
   fi
 
   verify_digest adapters/fido_custody.py \
-    2c2340a10bd6f53c044d6ace4d0205d4a8cff538c4e2db038088810d74b0b63e
+    ce04b4dc1c11ccf88bfd87418cf7e8d5387cb9d537cce756611a525c818fd89f
   verify_digest adapters/fido-custody-v1.md \
     9d037a6ef9b84eaddf103cd05c9fc5bc336a5d393bcd0dc57fb01387c51a3c4d
   verify_digest conformance/check-fido-custody.py \
-    08654685f99ab3603993dd4473709cd14ec692992ed705f51a1fa0326430fe40
+    1bae79b4f6cf546726fb77bbfbc78949e083da8b5c5aa589094e5a4c2425d7c6
   verify_digest conformance/test_support.py \
     45ff4ac487816dbe76652bf81f38ebd3caae89b1fd59ea16a3a094e8649ab067
   verify_digest conformance/strict_json.py \
@@ -212,9 +212,9 @@ record = {
         "clean_before": True,
         "clean_after": clean_after,
         "sha256": {
-            "adapters/fido_custody.py": "2c2340a10bd6f53c044d6ace4d0205d4a8cff538c4e2db038088810d74b0b63e",
+            "adapters/fido_custody.py": "ce04b4dc1c11ccf88bfd87418cf7e8d5387cb9d537cce756611a525c818fd89f",
             "adapters/fido-custody-v1.md": "9d037a6ef9b84eaddf103cd05c9fc5bc336a5d393bcd0dc57fb01387c51a3c4d",
-            "conformance/check-fido-custody.py": "08654685f99ab3603993dd4473709cd14ec692992ed705f51a1fa0326430fe40",
+            "conformance/check-fido-custody.py": "1bae79b4f6cf546726fb77bbfbc78949e083da8b5c5aa589094e5a4c2425d7c6",
             "conformance/test_support.py": "45ff4ac487816dbe76652bf81f38ebd3caae89b1fd59ea16a3a094e8649ab067",
             "conformance/strict_json.py": "505557305f5cd7033f3a082952b917275cc04cea643c7a709306fc461675b4ac",
         },
