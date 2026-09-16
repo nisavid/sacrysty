@@ -14,15 +14,20 @@ The repository contains a non-operational Rust library build skeleton. The
 selects one root package/library named `sacrysty`. Sacrystan is the public-facing
 operator; add the prospective `sacryd` command (pronounced “sacred”) only when a
 concrete helper needs it. Background workers and published bodies of practice
-remain unnamed. Command grammar, schemas, authority semantics, custody model,
-and protocol implementation remain with their owning Wayfinder work.
+remain unnamed. The public-record envelope schema is settled. Record-family
+body schemas are not supplied; command grammar, authority semantics, custody
+model, and protocol implementation remain with their owning Wayfinder work.
 
 ## Ownership boundary
 
-Public reusable contracts, implementations, adapter interfaces and maintained
-reference adapters, public policy profiles, fixtures, conformance assets,
-qualification formats and records, documentation, governance, compatibility
-declarations, and releases belong here.
+Generic cryptographic-operation contracts, implementations, adapter interfaces
+and maintained reference adapters, public policy profiles, fixtures,
+cryptographic conformance assets, qualification formats and records,
+documentation, governance, compatibility declarations, and Sacrysty releases
+belong here. Codiquary owns release-authority, publication, verifier, and
+protocol contracts, plus executable release conformance. Sacrysty may consume
+those contracts after their owning decisions settle them; it does not redefine
+their wire semantics.
 
 Private deployment bindings, exact adopter locks, hosts, accounts, provider
 resources, opaque secret references, protected bootstrap state, ceremonies,

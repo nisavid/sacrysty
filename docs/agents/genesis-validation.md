@@ -13,13 +13,18 @@ for the candidate. The owning issue controls acceptance of the complete genesis.
 3. Verify each source commit and its changed paths. Record copied, translated,
    retained, and superseded inputs. A closed issue or available Git object does
    not prove that its source is integrated or that its review covers the candidate.
+   Require complete history, then run `conformance/check-source-inventory.py` to
+   compare every producer path with the commit, parent, tree, mode, blob bytes,
+   byte length, and SHA-256 recorded in the source inventory. A shallow clone or
+   missing object is a failure, not a skipped provenance check.
 4. Compare the candidate's claimed behavior with the accepted contracts. Keep
    undefined schemas and operational behavior with their owning decisions.
 
 ## Check the candidate
 
 Run from a clean checkout of the candidate commit. Keep outputs outside the
-checkout so they cannot become untracked inputs to the next check.
+checkout so they cannot become untracked inputs to the next check. Set `TMPDIR`
+to an existing external directory before invoking the procedure.
 
 ```sh
 ./scripts/check-conformance.sh
@@ -30,18 +35,21 @@ cargo test --frozen --all-targets --all-features
 RUSTDOCFLAGS='-D warnings' cargo doc --frozen --no-deps --all-features
 ```
 
-The conformance entrypoint runs public-record, synthetic custody, and probe
-regression checks in normal and optimized Python, then both disposable
-crypto-tool probes. Probe regression tests use constructed tool responses;
-only the subsequent crypto probes exercise the selected real tools. The
-`--synthetic-only` option omits the crypto probes and reports that omission.
+The conformance entrypoint checks the full-history source inventory, then runs
+public-record, synthetic custody, crypto-runner, and aggregate-result regression
+checks in normal and optimized Python. It then runs both disposable crypto-tool
+probes. Probe regression tests use constructed tool responses; only the
+subsequent crypto probes exercise the selected real tools. The
+`--synthetic-only` option omits the real probes and reports that omission.
 Neither mode is a hardware or adoption qualification. The empty Rust library
 test harness establishes buildability and contains no behavioral tests.
 
 Bind tool observations to the exact source commit, runtime versions,
-executable/dependency identities, fixture bytes, and measured results. Check
-that each crypto result names the tested commit. Record an unsupported or
-unrun result directly; do not turn it into a pass for a different claim.
+executable/dependency identities, fixture bytes, and measured results. The
+aggregate parses each result, checks its schema and mandatory booleans, and
+requires the tested commit. Record `unsupported`, `probe-failed`,
+`round-trip-failed`, or unrun directly; only an explicit recognized capability
+rejection is `unsupported`, and none becomes a positive capability claim.
 
 Native Linux and macOS build results belong to the revision that ran in CI.
 Synthetic conformance on a platform does not establish that platform's

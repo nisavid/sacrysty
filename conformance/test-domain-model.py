@@ -11,9 +11,9 @@ import pathlib
 import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
 
+from test_support import external_temporary_directory
 
 CHECKER_PATH = pathlib.Path(__file__).with_name("check-domain-model.py")
 SPEC = importlib.util.spec_from_file_location("check_domain_model", CHECKER_PATH)
@@ -35,8 +35,51 @@ class PublicRecordValidationTests(unittest.TestCase):
         candidate["body"] = {"unknown_family_field": {"not": "consumed"}}
         self.assertTrue(CHECKER.valid(candidate))
 
+    def test_serialized_envelope_rejects_duplicate_members_at_any_depth(self) -> None:
+        for label, serialized in (
+            ("top level", b'{"body":{},"body":{}}'),
+            ("body", b'{"body":{"claim":1,"claim":2}}'),
+            (
+                "extension metadata",
+                b'{"extensions":{"example.invalid.audit":{"metadata":{"claim":1,"claim":2}}}}',
+            ),
+        ):
+            with (
+                self.subTest(label),
+                self.assertRaises(CHECKER.InvalidSerializedEnvelope),
+            ):
+                CHECKER.parse_serialized_envelope(serialized)
+
+    def test_serialized_envelope_rejects_non_json_constants(self) -> None:
+        for constant in (b"NaN", b"Infinity", b"-Infinity"):
+            with (
+                self.subTest(constant),
+                self.assertRaises(CHECKER.InvalidSerializedEnvelope),
+            ):
+                CHECKER.parse_serialized_envelope(
+                    b'{"body":{"value":' + constant + b"}}"
+                )
+
+    def test_envelope_structure_is_derived_from_the_checked_in_schema(self) -> None:
+        schema = copy.deepcopy(CHECKER.SCHEMA)
+        schema["properties"]["record_type"]["enum"].append("test-family")
+        candidate = copy.deepcopy(CANONICAL)
+        candidate["record_type"] = "test-family"
+
+        self.assertTrue(CHECKER.valid(candidate, schema=schema))
+
+        schema["properties"]["body"]["minProperties"] = 1
+        with self.assertRaises(CHECKER.UnsupportedSchemaError):
+            CHECKER.valid(candidate, schema=schema)
+
     def test_required_envelope_fields_cannot_be_omitted(self) -> None:
-        for field in ("record_type", "schema_version", "record_id", "publisher", "body"):
+        for field in (
+            "record_type",
+            "schema_version",
+            "record_id",
+            "publisher",
+            "body",
+        ):
             with self.subTest(field):
                 candidate = copy.deepcopy(CANONICAL)
                 candidate.pop(field)
@@ -192,8 +235,8 @@ class PublicRecordValidationTests(unittest.TestCase):
 
     def test_optimized_checker_fails_when_a_control_fixture_is_invalid(self) -> None:
         repository = CHECKER_PATH.parents[1]
-        with tempfile.TemporaryDirectory(
-            prefix=".domain-model-test-", dir=repository
+        with external_temporary_directory(
+            repository, prefix="sacrysty-domain-model-test-"
         ) as directory:
             fixture_root = pathlib.Path(directory)
             (fixture_root / "conformance").mkdir()
@@ -201,8 +244,7 @@ class PublicRecordValidationTests(unittest.TestCase):
             shutil.copy2(CHECKER_PATH, fixture_root / "conformance")
             shutil.copytree(repository / "fixtures", fixture_root / "fixtures")
             shutil.copy2(
-                repository
-                / "contracts/schemas/public-record-envelope-v1.schema.json",
+                repository / "contracts/schemas/public-record-envelope-v1.schema.json",
                 fixture_root / "contracts/schemas",
             )
             (fixture_root / "fixtures/public-record-canonical.json").write_text("{}\n")
@@ -221,6 +263,7 @@ class PublicRecordValidationTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("conformance passed", result.stdout)
+        self.assertIn("canonical fixture", result.stderr)
 
 
 if __name__ == "__main__":

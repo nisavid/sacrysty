@@ -33,12 +33,14 @@ with an explicit clarification of the envelope check's limits. Shared README
 files and the ADR index describe the assembled candidate. The domain checker,
 custody adapter, custody checks, and crypto-conformance probe contain the
 corrections described in [ADR 0002](../adr/0002-genesis-integration-boundary.md),
-with focused regression cases. The signing-profile probe is retained unchanged.
-The integration diff is the authoritative record of those translations.
+with focused regression cases. The retained signing-profile probe now shares
+the isolated-store, hashing, JSON, and verified-cleanup boundary with the crypto
+probe. The integration diff is the authoritative record of those translations.
 
-The new validation entrypoint, native CI invocation, and
-[consumer procedure](../agents/genesis-validation.md) exercise the assembled
-tree. They establish no additional product interface or operational authority.
+The new full-history inventory check, validation entrypoint, native CI
+invocation, and [consumer procedure](../agents/genesis-validation.md) exercise
+the assembled tree. They establish no additional product interface or
+operational authority.
 
 ## Controlling public decisions
 
@@ -52,8 +54,8 @@ The [reference-adoption profile](https://github.com/nisavid/dotfiles/issues/217#
 owns adopter requirements. It supplies no private values or production authority
 to this candidate.
 
-The public-record envelope does not supply record-family schemas or operational
-protocols. The synthetic custody adapter does not qualify an authenticator or
-plugin. Historical tool observations do not qualify the integration runtime.
-Renew the relevant checks and reviews on the final candidate, preserving each
-result's scope and limitations.
+The public-record envelope does not supply record-family body schemas or
+operational protocols. The synthetic custody adapter does not qualify an
+authenticator or plugin. Historical tool observations do not qualify the
+integration runtime. Renew the relevant checks and reviews on the final
+candidate, preserving each result's scope and limitations.

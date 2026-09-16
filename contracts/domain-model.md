@@ -61,11 +61,13 @@ interface, implementation, and qualification exist.
 
 ## Genesis handoff
 
-Genesis consumes the envelope schema, record-family schemas, ownership table,
-and hostile fixtures in this directory. It must bind its implementation and
-validation to the immutable revision containing these files. Adapter work and
-genesis integration start only after a fresh handoff revalidates the native
-Wayfinder graph and coordinates with the conformance worker.
+Genesis consumes the envelope schema, ownership table, and hostile fixtures in
+this directory. Record-family body schemas are not supplied by this decision
+and remain a prerequisite before a family body can be consumed. Genesis must
+bind its implementation and validation to the immutable revision containing
+these files. Adapter work and genesis integration start only after a fresh
+handoff revalidates the native Wayfinder graph and coordinates with the
+conformance worker.
 
 ## Current implementation limit
 

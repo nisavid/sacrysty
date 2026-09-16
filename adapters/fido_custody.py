@@ -19,8 +19,9 @@ import selectors
 import signal
 import subprocess
 import time
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import BinaryIO, Mapping, Sequence
+from typing import BinaryIO
 
 
 class CustodyError(RuntimeError):
@@ -71,7 +72,9 @@ def _scrub_environment(source: Mapping[str, str] | None) -> dict[str, str]:
     return {key: value for key, value in source.items() if key in allowed}
 
 
-def _object_without_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+def _object_without_duplicate_keys(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
     result: dict[str, object] = {}
     for key, value in pairs:
         if key in result:
@@ -168,7 +171,8 @@ def _bounded_communicate(
                 if stream_name == "stdin":
                     try:
                         written = os.write(
-                            pipe.fileno(), input_bytes[input_offset : input_offset + 65536]
+                            pipe.fileno(),
+                            input_bytes[input_offset : input_offset + 65536],
                         )
                     except BrokenPipeError:
                         unregister_and_close(pipe)
@@ -264,6 +268,10 @@ class OneShotCustodyAdapter:
         except OSError as exc:
             _terminate_and_reap(process)
             raise CustodyError("worker I/O failure") from exc
+        # The leader may have exited after producing a complete response while
+        # an ordinary same-group descendant remains. Reap the whole one-shot
+        # process group before interpreting or returning the response.
+        _terminate_and_reap(process)
         if process.returncode != 0:
             raise CustodyError("worker failure")
         try:
@@ -300,15 +308,14 @@ class OneShotCustodyAdapter:
         ):
             if message[key] != expected:
                 raise CustodyError(f"{key} mismatch")
-        if (
-            not isinstance(message["uv_mode"], str)
-            or message["uv_mode"] not in {"built-in", "pin"}
-        ):
+        if not isinstance(message["uv_mode"], str) or message["uv_mode"] not in {
+            "built-in",
+            "pin",
+        }:
             raise CustodyError("unknown UV mode")
-        if (
-            not isinstance(message["timing_class"], str)
-            or message["timing_class"] not in {"interactive", "bounded"}
-        ):
+        if not isinstance(message["timing_class"], str) or message[
+            "timing_class"
+        ] not in {"interactive", "bounded"}:
             raise CustodyError("unknown timing class")
         return CustodyResult(
             plaintext=plaintext,

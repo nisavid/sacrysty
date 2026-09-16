@@ -7,15 +7,14 @@ import os
 import pathlib
 import stat
 import sys
-import tempfile
 import time
 
 ROOT = pathlib.Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT))
 from adapters.fido_custody import CustodyError, CustodyRequest, OneShotCustodyAdapter
+from conformance.test_support import external_temporary_directory
 
-
-WORKER = r'''#!/usr/bin/env python3
+WORKER = r"""#!/usr/bin/env python3
 import hashlib, json, os, subprocess, sys, time
 case = sys.stdin.buffer.readline().decode("ascii").rstrip("\n")
 if any(name.startswith("SACRYSTY_TEST_") for name in os.environ):
@@ -37,13 +36,21 @@ if case == "oversized-stderr":
 if case == "timeout":
     time.sleep(2)
     raise SystemExit(0)
-if case == "lingering-child":
-    marker = os.path.join(os.path.dirname(__file__), "lingering-child-survived")
+if case in {"lingering-child", "redirected-child"}:
+    marker = os.path.join(os.path.dirname(__file__), f"{case}-survived")
     child = (
         "import pathlib,time; time.sleep(0.4); "
         f"pathlib.Path({marker!r}).write_text('alive')"
     )
-    subprocess.Popen([sys.executable, "-c", child])
+    if case == "redirected-child":
+        subprocess.Popen(
+            [sys.executable, "-c", child],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    else:
+        subprocess.Popen([sys.executable, "-c", child])
 if case == "crash":
     raise SystemExit(9)
 if case == "partial":
@@ -72,7 +79,7 @@ if case == "duplicate":
     print('{"status":"rejected",' + encoded[1:], end="")
     raise SystemExit(0)
 print(json.dumps(message), end="")
-'''
+"""
 
 
 def expect_failure(
@@ -104,7 +111,7 @@ def require(condition: bool, diagnostic: str) -> None:
 
 def main() -> None:
     request = request_for()
-    with tempfile.TemporaryDirectory(prefix=".fido-test-", dir=ROOT) as directory:
+    with external_temporary_directory(ROOT, prefix="sacrysty-fido-test-") as directory:
         worker = pathlib.Path(directory) / "worker.py"
         worker.write_text(WORKER)
         worker.chmod(worker.stat().st_mode | stat.S_IXUSR)
@@ -119,7 +126,9 @@ def main() -> None:
             result.plaintext == b"synthetic plaintext canary",
             "normal worker plaintext was not returned",
         )
-        require(result.evidence.uv_mode == "built-in", "normal UV mode was not recorded")
+        require(
+            result.evidence.uv_mode == "built-in", "normal UV mode was not recorded"
+        )
 
         pin_adapter = OneShotCustodyAdapter(command, environment=environment)
         require(
@@ -189,12 +198,30 @@ def main() -> None:
             "worker timeout",
         )
         if time.monotonic() - started >= 1.0:
-            raise AssertionError("worker child retaining pipes was not boundedly terminated")
+            raise AssertionError(
+                "worker child retaining pipes was not boundedly terminated"
+            )
         time.sleep(0.5)
         if (pathlib.Path(directory) / "lingering-child-survived").exists():
-            raise AssertionError("worker child retaining pipes survived process-group cleanup")
+            raise AssertionError(
+                "worker child retaining pipes survived process-group cleanup"
+            )
+        redirected = OneShotCustodyAdapter(command, environment=environment).unwrap(
+            request_for("redirected-child")
+        )
+        require(
+            redirected.plaintext == b"synthetic plaintext canary",
+            "worker response preceding redirected child was not accepted",
+        )
+        time.sleep(0.5)
+        if (pathlib.Path(directory) / "redirected-child-survived").exists():
+            raise AssertionError(
+                "worker child with redirected streams survived successful completion"
+            )
         expect_failure(
-            OneShotCustodyAdapter(command, max_envelope_bytes=4, environment=environment),
+            OneShotCustodyAdapter(
+                command, max_envelope_bytes=4, environment=environment
+            ),
             request,
         )
         try:

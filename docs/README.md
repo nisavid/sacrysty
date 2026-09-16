@@ -10,8 +10,9 @@ that behavior; it does not redefine it. Executable examples should come from
 
 - `adr/` records architectural decisions and proposals with explicit status.
 - `agents/` documents repository mechanics for coding agents.
-- [Operational boundaries](explanation/operations-boundaries.md) explains the
-  settled threat, authority, custody, recovery, and incident requirements.
+- [Cryptographic operations boundaries](explanation/operations-boundaries.md)
+  explains the settled threat and custody constraints and the separate
+  Sacrysty/Codiquary ownership boundary.
 - `provenance/` records reviewed source evidence and ownership handoffs.
 
 Published bodies of practice remain unnamed. Do not introduce a branded name

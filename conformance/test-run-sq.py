@@ -11,12 +11,13 @@ import shutil
 import stat
 import subprocess
 import sys
-import tempfile
 import unittest
 
+from test_support import external_temporary_directory
 
 ROOT = pathlib.Path(__file__).parents[1]
 RUNNER = ROOT / "conformance/run-sq.sh"
+SHARED_HELPER = ROOT / "conformance/sq-evidence-lib.sh"
 
 
 def write_executable(path: pathlib.Path, content: str) -> None:
@@ -26,32 +27,38 @@ def write_executable(path: pathlib.Path, content: str) -> None:
 
 class RunSqTests(unittest.TestCase):
     def make_repository(self) -> tuple[pathlib.Path, dict[str, str]]:
-        self.temporary_directory = tempfile.TemporaryDirectory(
-            prefix=".run-sq-test-", dir=ROOT
+        self.temporary_directory = external_temporary_directory(
+            ROOT, prefix="sacrysty-run-sq-test-"
         )
         self.addCleanup(self.temporary_directory.cleanup)
-        repository = pathlib.Path(self.temporary_directory.name) / "repository"
+        test_root = pathlib.Path(self.temporary_directory.name)
+        repository = test_root / "repository"
+        runtime = test_root / "runtime"
         (repository / "conformance").mkdir(parents=True)
         (repository / "fixtures/rfc9580").mkdir(parents=True)
         (repository / "fake-bin").mkdir()
-        (repository / "tmp").mkdir()
-        (repository / "home").mkdir()
+        (runtime / "tmp").mkdir(parents=True)
+        (runtime / "home").mkdir()
         (repository / "hooks").mkdir()
         shutil.copy2(RUNNER, repository / "conformance/run-sq.sh")
+        shutil.copy2(SHARED_HELPER, repository / "conformance/sq-evidence-lib.sh")
         (repository / "fixtures/rfc9580/message.txt").write_text(
             "Sacrysty disposable conformance fixture.\n"
         )
 
         environment = {
             "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_CONFIG_GLOBAL": str(repository / "missing-global-gitconfig"),
-            "HOME": str(repository / "home"),
+            "GIT_CONFIG_GLOBAL": str(runtime / "missing-global-gitconfig"),
+            "HOME": str(runtime / "home"),
             "LC_ALL": "C",
             "PATH": os.environ["PATH"],
-            "XDG_CONFIG_HOME": str(repository / "home/config"),
-            "TMPDIR": str(repository / "tmp"),
+            "XDG_CONFIG_HOME": str(runtime / "home/config"),
+            "TMPDIR": str(runtime / "tmp"),
+            "TEST_RUNTIME": str(runtime),
         }
-        subprocess.run(["git", "init", "-q", str(repository)], check=True, env=environment)
+        subprocess.run(
+            ["git", "init", "-q", str(repository)], check=True, env=environment
+        )
         subprocess.run(
             ["git", "-C", str(repository), "config", "user.name", "Fixture"],
             check=True,
@@ -113,10 +120,10 @@ class RunSqTests(unittest.TestCase):
     def install_successful_fake_tools(
         self, repository: pathlib.Path, environment: dict[str, str]
     ) -> pathlib.Path:
-        tool_log = repository / "tool.log"
+        tool_log = pathlib.Path(environment["TEST_RUNTIME"]) / "tool.log"
         write_executable(
             repository / "fake-bin/sq",
-            r'''#!/bin/sh
+            r"""#!/bin/sh
 printf 'sq:%s\n' "$*" >>"$FAKE_TOOL_LOG"
 if [ "${1-}" = version ]; then
     printf 'sq "quoted" \\ path\nsecond\tline\n'
@@ -124,7 +131,28 @@ if [ "${1-}" = version ]; then
     exit 0
 fi
 case " $* " in
-    *' mldsa65-ed25519 '*) exit 1 ;;
+    *' mldsa65-ed25519 '*)
+        case "${FAKE_PQC_GENERATION:-unsupported}" in
+            unsupported)
+                printf 'Error: Unsupported public key algorithm: ML-DSA-65+Ed25519\n' >&2
+                exit 1
+                ;;
+            indeterminate)
+                printf 'Error: Unsupported public key algorithm: ML-DSA-65+Ed25519\n' >&2
+                printf 'Error: unable to write output: resource unavailable\n' >&2
+                exit 74
+                ;;
+            success) ;;
+        esac
+        ;;
+esac
+case " $* " in
+    *' sign '*'pqc-key.pgp '*)
+        if [ "${FAKE_PQC_ROUND_TRIP:-success}" = fail ]; then
+            printf 'Error: synthetic signing failure\n' >&2
+            exit 70
+        fi
+        ;;
 esac
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -135,11 +163,11 @@ while [ "$#" -gt 0 ]; do
     esac
     shift
 done
-''',
+""",
         )
         write_executable(
             repository / "fake-bin/sqv",
-            r'''#!/bin/sh
+            r"""#!/bin/sh
 printf 'sqv:%s\n' "$*" >>"$FAKE_TOOL_LOG"
 if [ "${1-}" = --version ]; then
     printf 'sqv "quoted" \\ path\nsecond\tline\n'
@@ -150,7 +178,7 @@ case " $* " in
     *'/tampered.txt '*|*'/tampered.sig '*|*'/other-cert.pgp '*) exit 1 ;;
 esac
 exit 0
-''',
+""",
         )
         self.commit_paths(repository, environment, "fake-bin")
         environment.update(
@@ -164,7 +192,7 @@ exit 0
 
     def test_untracked_dirt_is_rejected_before_tool_work(self) -> None:
         repository, environment = self.make_repository()
-        tool_log = repository / "tool.log"
+        tool_log = pathlib.Path(environment["TEST_RUNTIME"]) / "tool.log"
         fake_tool = """#!/bin/sh
 printf 'invoked\\n' >>"$FAKE_TOOL_LOG"
 exit 97
@@ -191,7 +219,9 @@ exit 97
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("clean worktree", result.stderr)
-        self.assertFalse(tool_log.exists(), "sq/sqv ran before untracked dirt rejection")
+        self.assertFalse(
+            tool_log.exists(), "sq/sqv ran before untracked dirt rejection"
+        )
 
     def test_tracked_dirt_is_rejected_before_tool_work(self) -> None:
         repository, environment = self.make_repository()
@@ -235,23 +265,33 @@ exit 97
         self.install_successful_fake_tools(repository, environment)
         portable_bin = repository / "portable-bin"
         portable_bin.mkdir()
-        for name in ("awk", "cat", "cp", "dirname", "git", "mktemp", "rm", "tr", "wc"):
+        for name in (
+            "awk",
+            "cat",
+            "cp",
+            "dirname",
+            "git",
+            "mktemp",
+            "rm",
+            "tr",
+            "wc",
+        ):
             executable = shutil.which(name)
             if executable is None:
                 self.fail(f"required test executable is unavailable: {name}")
             (portable_bin / name).symlink_to(executable)
         (portable_bin / "python3").symlink_to(sys.executable)
-        hash_log = repository / "hash.log"
+        hash_log = pathlib.Path(environment["TEST_RUNTIME"]) / "hash.log"
         write_executable(
             portable_bin / "shasum",
-            r'''#!/bin/sh
+            r"""#!/bin/sh
 printf '%s:%s\n' "$2" "$3" >>"$HASH_TOOL_LOG"
 "$HASH_PYTHON" -c '
 import hashlib, pathlib, sys
 algorithm, path = sys.argv[1:]
 print(hashlib.new("sha" + algorithm, pathlib.Path(path).read_bytes()).hexdigest(), path)
 ' "$2" "$3"
-''',
+""",
         )
         self.commit_paths(repository, environment, "portable-bin")
         environment.update(
@@ -317,8 +357,12 @@ print(hashlib.new("sha" + algorithm, pathlib.Path(path).read_bytes()).hexdigest(
         )
         message = (repository / "fixtures/rfc9580/message.txt").read_bytes()
         self.assertEqual(evidence["fixture_bytes"], len(message))
-        self.assertEqual(evidence["fixture_sha256"], hashlib.sha256(message).hexdigest())
-        self.assertEqual(evidence["fixture_sha512"], hashlib.sha512(message).hexdigest())
+        self.assertEqual(
+            evidence["fixture_sha256"], hashlib.sha256(message).hexdigest()
+        )
+        self.assertEqual(
+            evidence["fixture_sha512"], hashlib.sha512(message).hexdigest()
+        )
         self.assertEqual(
             evidence["result"],
             {
@@ -329,13 +373,71 @@ print(hashlib.new("sha" + algorithm, pathlib.Path(path).read_bytes()).hexdigest(
         self.assertIs(evidence["checks"]["temporary_key_material_removed"], True)
 
         temporary_paths = []
-        prefix = str(repository / "tmp/sacrysty-conformance.")
+        prefix = str(pathlib.Path(environment["TMPDIR"]) / "sacrysty-conformance.")
         for token in tool_log.read_text().split():
             if token.startswith(prefix):
                 temporary_paths.append(pathlib.Path(token))
         self.assertTrue(temporary_paths, "fake tools did not receive isolated paths")
         for path in temporary_paths:
             self.assertFalse(path.exists(), f"temporary artifact was retained: {path}")
+
+    def test_indeterminate_pqc_generation_failure_is_not_unsupported(self) -> None:
+        repository, environment = self.make_repository()
+        self.install_successful_fake_tools(repository, environment)
+        environment["FAKE_PQC_GENERATION"] = "indeterminate"
+
+        result = subprocess.run(
+            ["bash", str(repository / "conformance/run-sq.sh")],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+
+        evidence = json.loads(result.stdout)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(evidence["result"]["openpgp-rfc9980-pqc-v1"], "probe-failed")
+
+    def test_failed_pqc_round_trip_is_nonpositive_and_fails_the_probe(self) -> None:
+        repository, environment = self.make_repository()
+        self.install_successful_fake_tools(repository, environment)
+        environment.update(
+            {"FAKE_PQC_GENERATION": "success", "FAKE_PQC_ROUND_TRIP": "fail"}
+        )
+
+        result = subprocess.run(
+            ["bash", str(repository / "conformance/run-sq.sh")],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+
+        evidence = json.loads(result.stdout)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(
+            evidence["result"]["openpgp-rfc9980-pqc-v1"], "round-trip-failed"
+        )
+
+    def test_positive_pqc_round_trip_uses_observed_runtime_result(self) -> None:
+        repository, environment = self.make_repository()
+        self.install_successful_fake_tools(repository, environment)
+        environment["FAKE_PQC_GENERATION"] = "success"
+
+        result = subprocess.run(
+            ["bash", str(repository / "conformance/run-sq.sh")],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        evidence = json.loads(result.stdout)
+        self.assertEqual(
+            evidence["result"]["openpgp-rfc9980-pqc-v1"],
+            "qualified-for-observed-runtime",
+        )
 
     def test_cleanup_failure_cannot_emit_cleanup_success(self) -> None:
         repository, environment = self.make_repository()

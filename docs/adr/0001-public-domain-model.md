@@ -35,9 +35,10 @@ The threat-boundary review preserves the #207 invariant that failed,
 unsupported, or indeterminate inputs never create positive authority. This is
 a pre-1.0 incompatible contract addition: readers must explicitly support
 `io.nisavid.sacrysty.public-record/v1`, and migrations produce a new digest
-without rewriting a prior record. The executable conformance check accepts one
-canonical fixture and rejects four hostile fixtures. It uses no external
-runtime, secret, provider, host, or production value.
+without rewriting a prior record. The executable conformance check accepts the
+checked-in canonical envelopes and rejects the checked-in hostile serialized
+inputs. It validates no record-family body and uses no external runtime, secret,
+provider, host, or production value.
 
 Genesis must bind its implementation and evidence to the immutable revision
 containing this ADR, schema, and fixtures. Adapter implementation and genesis

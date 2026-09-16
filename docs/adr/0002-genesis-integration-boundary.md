@@ -12,6 +12,12 @@ boundaries together. Keep the Rust library empty until an owning decision
 defines a concrete library or command interface. Record-family body schemas,
 policy and registry behavior, operational protocols, and complete ceremony
 procedures require their owning decisions before implementation or acceptance.
+Codiquary owns release-authority, publication, verifier, protocol, and
+executable release-conformance contracts. Sacrysty may consume their accepted
+revisions, but this candidate neither defines nor restates their wire semantics.
+[Codiquary #35](https://github.com/nisavid/codiquary/issues/35) remains the
+operator's current decision for the first executable release-conformance
+increment; no outcome is selected here.
 
 The candidate's public-record check validates envelope structure and the
 accepted inert-extension rules. It does not validate record-family bodies or
@@ -20,15 +26,18 @@ extensions. Invalid shapes and unsupported inputs fail even when Python
 optimization is enabled.
 
 The synthetic custody adapter bounds input, both output streams, and waiting
-time. Failure terminates the worker process group and uses bounded cleanup.
-Duplicate response fields are rejected. Test controls belong to disposable
-workers, rather than the adapter's environment forwarding policy. A process
-group is not a sandbox for a worker that deliberately escapes it.
+time. Every completion path terminates ordinary same-process-group descendants
+and boundedly reaps the worker leader. Duplicate response fields are rejected.
+Test controls belong to disposable workers, rather than the adapter's
+environment forwarding policy. A process group is not a sandbox for a worker
+that deliberately escapes it.
 
-The crypto probe records observed behavior for the selected standard tools.
-It requires clean source, portable hash tools, valid JSON output, and verified
-temporary cleanup before reporting success. Post-quantum capability remains
-subject to the existing positive-operation and independent-verification gate.
+The crypto probes record observed behavior for the selected standard tools.
+They require clean source, portable hash tools, admitted JSON results, and
+verified temporary cleanup before reporting success. Post-quantum capability
+remains subject to the existing positive-operation and independent-verification
+gate; explicit unsupported capability, indeterminate probe failure, and failed
+round trip remain distinct results.
 
 ## Security considerations
 
