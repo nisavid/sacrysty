@@ -38,8 +38,9 @@ RUSTDOCFLAGS='-D warnings' cargo doc --frozen --no-deps --all-features
 The conformance entrypoint checks repository policy and whitespace; runs
 public-record and synthetic custody checks; runs the crypto-runner and process
 regressions; checks the full-history source inventory; then runs probe-result,
-strict-JSON, and aggregate-result regressions. It runs each Python check in
-normal and optimized mode before running both disposable crypto-tool probes.
+strict-JSON, and aggregate-result regressions. Each pre-probe Python check runs
+in normal and optimized mode. Complete mode then runs both disposable
+crypto-tool probes.
 Probe regression tests use constructed tool responses; only the subsequent
 crypto probes exercise the selected real tools. The `--synthetic-only` option
 omits the real probes and reports that omission. Neither mode is a hardware or
