@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly expected_source_revision=5a5a608b0123854a066550a89a53e830a124befa
+readonly expected_source_revision=001099750319aa47ca12b4e7466990577e9ced17
 readonly expected_public_inputs_manifest=4fa2c5ba1f9795c9c6fb63f11e342702e6e22cd3225d94ad8dd4a8130685a574
 readonly expected_primary_sources_manifest=7d20b934f9c5acda27e914336db0e01eed8693bf5253e8f42104f3df75214e8e
 
@@ -74,7 +74,7 @@ main() {
   verify_digest adapters/fido-custody-v1.md \
     9d037a6ef9b84eaddf103cd05c9fc5bc336a5d393bcd0dc57fb01387c51a3c4d
   verify_digest conformance/check-fido-custody.py \
-    b2b7191137b9e5e322ffb52ea7dd55d6ef96179e28e703bfb977199a9910189c
+    3124257c09af05d7325d1ffb4cb5397456355591485b1739a39fcd2b94c397c1
   verify_digest conformance/test_support.py \
     45ff4ac487816dbe76652bf81f38ebd3caae89b1fd59ea16a3a094e8649ab067
 
@@ -212,7 +212,7 @@ record = {
         "sha256": {
             "adapters/fido_custody.py": "c8b3dcb5c1ce395393d10f4621cd4e478e1d08202485f41848943163a96ba690",
             "adapters/fido-custody-v1.md": "9d037a6ef9b84eaddf103cd05c9fc5bc336a5d393bcd0dc57fb01387c51a3c4d",
-            "conformance/check-fido-custody.py": "b2b7191137b9e5e322ffb52ea7dd55d6ef96179e28e703bfb977199a9910189c",
+            "conformance/check-fido-custody.py": "3124257c09af05d7325d1ffb4cb5397456355591485b1739a39fcd2b94c397c1",
             "conformance/test_support.py": "45ff4ac487816dbe76652bf81f38ebd3caae89b1fd59ea16a3a094e8649ab067",
         },
     },
