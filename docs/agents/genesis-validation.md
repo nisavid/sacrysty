@@ -35,14 +35,16 @@ cargo test --frozen --all-targets --all-features
 RUSTDOCFLAGS='-D warnings' cargo doc --frozen --no-deps --all-features
 ```
 
-The conformance entrypoint checks the full-history source inventory, then runs
-public-record, synthetic custody, crypto-runner, and aggregate-result regression
-checks in normal and optimized Python. It then runs both disposable crypto-tool
-probes. Probe regression tests use constructed tool responses; only the
-subsequent crypto probes exercise the selected real tools. The
-`--synthetic-only` option omits the real probes and reports that omission.
-Neither mode is a hardware or adoption qualification. The empty Rust library
-test harness establishes buildability and contains no behavioral tests.
+The conformance entrypoint checks repository policy and whitespace; runs
+public-record and synthetic custody checks; runs the crypto-runner and process
+regressions; checks the full-history source inventory; then runs probe-result,
+strict-JSON, and aggregate-result regressions. It runs each Python check in
+normal and optimized mode before running both disposable crypto-tool probes.
+Probe regression tests use constructed tool responses; only the subsequent
+crypto probes exercise the selected real tools. The `--synthetic-only` option
+omits the real probes and reports that omission. Neither mode is a hardware or
+adoption qualification. The empty Rust library test harness establishes
+buildability and contains no behavioral tests.
 
 Each selected `sq` or `sqv` process is limited to 120 seconds, 1 MiB on each
 captured output stream, and 16 MiB per regular file. The aggregate limits each

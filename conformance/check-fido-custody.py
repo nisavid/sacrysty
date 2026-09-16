@@ -172,12 +172,17 @@ else:
 def expect_failure(
     adapter: OneShotCustodyAdapter,
     request: CustodyRequest,
-    expected_diagnostic: str | None = None,
+    expected_diagnostic: str | tuple[str, ...] | None = None,
 ) -> None:
     try:
         adapter.unwrap(request)
     except CustodyError as exc:
-        if expected_diagnostic is not None and str(exc) != expected_diagnostic:
+        if isinstance(expected_diagnostic, tuple):
+            if str(exc) not in expected_diagnostic:
+                raise AssertionError(
+                    f"expected one of {expected_diagnostic!r}, received {str(exc)!r}"
+                ) from exc
+        elif expected_diagnostic is not None and str(exc) != expected_diagnostic:
             raise AssertionError(
                 f"expected {expected_diagnostic!r}, received {str(exc)!r}"
             ) from exc
@@ -342,7 +347,9 @@ def main() -> None:
                 "sha256:plugin",
                 "sha256:age",
             ),
-            "worker I/O failure",
+            # A later non-ESRCH group-cleanup failure must remain visible over
+            # the initial broken pipe. Either result rejects incomplete input.
+            ("worker I/O failure", "worker cleanup failure"),
         )
 
         for case, diagnostic in (
