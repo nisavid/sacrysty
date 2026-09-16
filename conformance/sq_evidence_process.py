@@ -13,20 +13,40 @@ import subprocess
 import sys
 import time
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import BinaryIO
 
-TOOL_TIMEOUT_SECONDS = 120.0
-PROBE_TIMEOUT_SECONDS = 900.0
 STREAM_LIMIT_BYTES = 1024 * 1024
 FILE_LIMIT_BYTES = 16 * 1024 * 1024
-TERMINATE_GRACE_SECONDS = 0.25
 KILL_GRACE_SECONDS = 1.0
-# A probe runner can be waiting on one tool helper whose selected process is in
-# a separate session. Let that helper use both of its cleanup windows and exit
-# before escalating against the runner group.
-PROBE_TERMINATE_GRACE_SECONDS = (
-    TERMINATE_GRACE_SECONDS + 2 * KILL_GRACE_SECONDS
-)
+
+
+@dataclass(frozen=True)
+class ProcessLimits:
+    timeout_seconds: float
+    terminate_grace_seconds: float
+
+
+@dataclass(frozen=True)
+class ProcessOutputPaths:
+    status: pathlib.Path
+    stdout: pathlib.Path
+    stderr: pathlib.Path
+
+    def all(self) -> tuple[pathlib.Path, pathlib.Path, pathlib.Path]:
+        return self.status, self.stdout, self.stderr
+
+
+PROCESS_LIMITS = {
+    "tool": ProcessLimits(timeout_seconds=120.0, terminate_grace_seconds=0.25),
+    # A probe runner can be waiting on one tool helper whose selected process
+    # is in a separate session. Let that helper use both of its cleanup windows
+    # and exit before escalating against the runner group.
+    "probe": ProcessLimits(
+        timeout_seconds=900.0,
+        terminate_grace_seconds=0.25 + 2 * KILL_GRACE_SECONDS,
+    ),
+}
 _LIMIT_AND_EXEC = r"""
 import os
 import resource
@@ -50,6 +70,10 @@ class ProcessBoundaryError(RuntimeError):
 
 class ProcessInterrupted(ProcessBoundaryError):
     """The helper was asked to stop while its selected process was active."""
+
+
+class _ProcessOwnershipLost(ProcessBoundaryError):
+    """The selected leader was reaped outside this process boundary."""
 
 
 def _errno_name(error: OSError) -> str:
@@ -89,13 +113,12 @@ def _signal_group(process_group: int, selected_signal: signal.Signals) -> bool:
     return True
 
 
-def _wait_for_group_exit(process: subprocess.Popen[bytes], seconds: float) -> bool:
+def _wait_for_group_exit(process_group: int, seconds: float) -> bool:
     deadline = time.monotonic() + seconds
     last_permission_denial: ProcessBoundaryError | None = None
     while True:
-        process.poll()
         try:
-            group_exists = _group_exists(process.pid)
+            group_exists = _group_exists(process_group)
         except ProcessBoundaryError as exc:
             if not _is_permission_denial(exc):
                 raise
@@ -114,6 +137,31 @@ def _wait_for_group_exit(process: subprocess.Popen[bytes], seconds: float) -> bo
                 raise last_permission_denial
             return False
         time.sleep(min(0.01, remaining))
+
+
+def _leader_exited_unreaped(process: subprocess.Popen[bytes]) -> bool:
+    try:
+        status = os.waitid(
+            os.P_PID,
+            process.pid,
+            os.WEXITED | os.WNOHANG | os.WNOWAIT,
+        )
+    except ChildProcessError as exc:
+        raise _ProcessOwnershipLost("process leader ownership was lost") from exc
+    except OSError as exc:
+        raise ProcessBoundaryError(
+            f"process leader status check failed ({_errno_name(exc)})"
+        ) from exc
+    return status is not None
+
+
+def _wait_for_cleanup_grace(seconds: float) -> None:
+    deadline = time.monotonic() + seconds
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        time.sleep(remaining)
 
 
 def _reap_leader_after_group_failure(
@@ -148,27 +196,33 @@ def _signal_group_or_reap_leader(
         _reap_leader_after_group_failure(process, group_cleanup_error)
 
 
-def _terminate_and_reap(process: subprocess.Popen[bytes], mode: str) -> None:
-    terminate_grace_seconds = (
-        PROBE_TERMINATE_GRACE_SECONDS
-        if mode == "probe"
-        else TERMINATE_GRACE_SECONDS
-    )
+def _terminate_and_reap(
+    process: subprocess.Popen[bytes], limits: ProcessLimits
+) -> None:
+    leader_already_exited = _leader_exited_unreaped(process)
     _signal_group_or_reap_leader(process, signal.SIGTERM)
-    try:
-        if _wait_for_group_exit(process, terminate_grace_seconds):
-            return
-    except ProcessBoundaryError as group_cleanup_error:
-        _reap_leader_after_group_failure(process, group_cleanup_error)
-
+    if not leader_already_exited:
+        _wait_for_cleanup_grace(limits.terminate_grace_seconds)
     _signal_group_or_reap_leader(process, signal.SIGKILL)
     try:
-        if not _wait_for_group_exit(process, KILL_GRACE_SECONDS):
-            if process.poll() is None:
-                raise ProcessBoundaryError("process leader cleanup timed out")
-            raise ProcessBoundaryError("process-group cleanup timed out")
-    except ProcessBoundaryError as group_cleanup_error:
-        _reap_leader_after_group_failure(process, group_cleanup_error)
+        process.wait(timeout=KILL_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        try:
+            process.kill()
+        except OSError as signal_error:
+            if signal_error.errno != errno.ESRCH:
+                raise ProcessBoundaryError(
+                    "process leader cleanup signal failed "
+                    f"({_errno_name(signal_error)})"
+                ) from signal_error
+        try:
+            process.wait(timeout=KILL_GRACE_SECONDS)
+        except subprocess.TimeoutExpired as final_error:
+            raise ProcessBoundaryError(
+                "process leader cleanup timed out"
+            ) from final_error
+    if not _wait_for_group_exit(process.pid, KILL_GRACE_SECONDS):
+        raise ProcessBoundaryError("process-group cleanup timed out")
 
 
 def _normalized_status(returncode: int) -> int:
@@ -192,12 +246,11 @@ def _regular_file_limit_reached(directory: pathlib.Path) -> bool:
     return False
 
 
-def _timeout_for(mode: str) -> float:
-    if mode == "tool":
-        return TOOL_TIMEOUT_SECONDS
-    if mode == "probe":
-        return PROBE_TIMEOUT_SECONDS
-    raise ProcessBoundaryError(f"unknown sq evidence process mode: {mode}")
+def _limits_for(mode: str) -> ProcessLimits:
+    try:
+        return PROCESS_LIMITS[mode]
+    except KeyError as exc:
+        raise ProcessBoundaryError(f"unknown sq evidence process mode: {mode}") from exc
 
 
 def _capture_ready_streams(
@@ -233,17 +286,15 @@ def _capture_ready_streams(
 
 def run_process(
     mode: str,
-    status_path: pathlib.Path,
-    stdout_path: pathlib.Path,
-    stderr_path: pathlib.Path,
+    output_paths: ProcessOutputPaths,
     command: Sequence[str],
 ) -> int:
     """Run one selected process and write its bounded streams and exit status."""
 
-    timeout_seconds = _timeout_for(mode)
+    limits = _limits_for(mode)
     if not command:
         raise ProcessBoundaryError("selected process command is empty")
-    paths = (status_path, stdout_path, stderr_path)
+    paths = output_paths.all()
     if len({path.resolve() for path in paths}) != len(paths):
         raise ProcessBoundaryError("selected process output paths must be distinct")
     output_parents = {path.parent.resolve() for path in paths}
@@ -254,11 +305,11 @@ def run_process(
         raise ProcessBoundaryError("selected process output path already exists")
 
     try:
-        stdout_file = stdout_path.open("xb")
+        stdout_file = output_paths.stdout.open("xb")
     except OSError as exc:
         raise ProcessBoundaryError("selected process output cannot be created") from exc
     try:
-        stderr_file = stderr_path.open("xb")
+        stderr_file = output_paths.stderr.open("xb")
     except OSError as exc:
         stdout_file.close()
         raise ProcessBoundaryError("selected process output cannot be created") from exc
@@ -307,9 +358,7 @@ def run_process(
                 raise ProcessBoundaryError("selected process could not start") from exc
         finally:
             startup_signal_mask_restored = True
-            signal.pthread_sigmask(
-                signal.SIG_SETMASK, previous_startup_signal_mask
-            )
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_startup_signal_mask)
         if process.stdout is None or process.stderr is None:
             raise ProcessBoundaryError("selected process pipes are unavailable")
 
@@ -321,10 +370,10 @@ def run_process(
             os.set_blocking(stream.fileno(), False)
             selector.register(stream, selectors.EVENT_READ)
 
-        deadline = time.monotonic() + timeout_seconds
-        while selector.get_map() or process.poll() is None:
-            if process.poll() is not None and not cleanup_complete:
-                _terminate_and_reap(process, mode)
+        deadline = time.monotonic() + limits.timeout_seconds
+        while selector.get_map() or not cleanup_complete:
+            if not cleanup_complete and _leader_exited_unreaped(process):
+                _terminate_and_reap(process, limits)
                 cleanup_complete = True
 
             remaining = deadline - time.monotonic()
@@ -338,9 +387,6 @@ def run_process(
                 mode, selector, streams, counts, min(0.05, remaining)
             )
 
-        if not cleanup_complete:
-            _terminate_and_reap(process, mode)
-            cleanup_complete = True
         if process.returncode is None:
             raise ProcessBoundaryError("selected process has no exit status")
         if _regular_file_limit_reached(output_directory):
@@ -349,7 +395,7 @@ def run_process(
         if child_status == 125:
             raise ProcessBoundaryError(f"{mode} process setup or execution failed")
         try:
-            with status_path.open("x", encoding="ascii") as status_file:
+            with output_paths.status.open("x", encoding="ascii") as status_file:
                 status_file.write(f"{child_status}\n")
         except OSError as exc:
             raise ProcessBoundaryError(
@@ -357,9 +403,13 @@ def run_process(
             ) from exc
         return child_status
     except BaseException as original_error:
-        if process is not None and not cleanup_complete:
+        if (
+            process is not None
+            and not cleanup_complete
+            and not isinstance(original_error, _ProcessOwnershipLost)
+        ):
             try:
-                _terminate_and_reap(process, mode)
+                _terminate_and_reap(process, limits)
             except ProcessBoundaryError as cleanup_error:
                 raise cleanup_error from original_error
         drain_deadline = time.monotonic() + KILL_GRACE_SECONDS
@@ -375,9 +425,7 @@ def run_process(
             previous_startup_signal_mask is not None
             and not startup_signal_mask_restored
         ):
-            signal.pthread_sigmask(
-                signal.SIG_SETMASK, previous_startup_signal_mask
-            )
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_startup_signal_mask)
         if previous_sigterm_handler is not None:
             signal.signal(signal.SIGTERM, previous_sigterm_handler)
         selector.close()
@@ -400,9 +448,11 @@ def main(arguments: Sequence[str]) -> int:
     try:
         run_process(
             mode,
-            pathlib.Path(status),
-            pathlib.Path(stdout),
-            pathlib.Path(stderr),
+            ProcessOutputPaths(
+                status=pathlib.Path(status),
+                stdout=pathlib.Path(stdout),
+                stderr=pathlib.Path(stderr),
+            ),
             arguments[5:],
         )
     except ProcessBoundaryError as exc:

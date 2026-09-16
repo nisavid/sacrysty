@@ -67,17 +67,16 @@ class SqEvidenceProcessTests(unittest.TestCase):
             time.sleep(0.01)
         self.fail(f"bounded process survived: {pid}")
 
-    def make_paths(
-        self, directory: str
-    ) -> tuple[pathlib.Path, pathlib.Path, pathlib.Path]:
+    def make_paths(self, directory: str) -> process_boundary.ProcessOutputPaths:
         root = pathlib.Path(directory)
-        return root / "status", root / "stdout", root / "stderr"
+        return process_boundary.ProcessOutputPaths(
+            status=root / "status",
+            stdout=root / "stdout",
+            stderr=root / "stderr",
+        )
 
     def test_tool_and_aggregate_probe_timeouts_fail_and_reap(self) -> None:
-        for mode, timeout_name in (
-            ("tool", "TOOL_TIMEOUT_SECONDS"),
-            ("probe", "PROBE_TIMEOUT_SECONDS"),
-        ):
+        for mode in ("tool", "probe"):
             with self.subTest(mode), external_temporary_directory(
                 ROOT, prefix=f"sacrysty-{mode}-timeout-test-"
             ) as directory:
@@ -90,20 +89,29 @@ class SqEvidenceProcessTests(unittest.TestCase):
                     "while True:\n"
                     "    time.sleep(1)\n"
                 )
-                status, stdout, stderr = self.make_paths(directory)
+                outputs = self.make_paths(directory)
+                limits = process_boundary.PROCESS_LIMITS[mode]
                 pid: int | None = None
                 try:
                     with (
-                        mock.patch.object(process_boundary, timeout_name, 0.1),
+                        mock.patch.dict(
+                            process_boundary.PROCESS_LIMITS,
+                            {
+                                mode: process_boundary.ProcessLimits(
+                                    timeout_seconds=0.1,
+                                    terminate_grace_seconds=(
+                                        limits.terminate_grace_seconds
+                                    ),
+                                )
+                            },
+                        ),
                         self.assertRaisesRegex(
                             process_boundary.ProcessBoundaryError, "timed out"
                         ),
                     ):
                         process_boundary.run_process(
                             mode,
-                            status,
-                            stdout,
-                            stderr,
+                            outputs,
                             [sys.executable, str(script)],
                         )
                 finally:
@@ -112,7 +120,7 @@ class SqEvidenceProcessTests(unittest.TestCase):
                         self.addCleanup(_terminate_if_alive, pid)
                 self.assertIsNotNone(pid)
                 self.assert_process_gone(int(pid))
-                self.assertFalse(status.exists())
+                self.assertFalse(outputs.status.exists())
 
     def test_stdout_and_stderr_floods_stop_at_the_stream_limit(self) -> None:
         for stream in ("stdout", "stderr"):
@@ -127,7 +135,7 @@ class SqEvidenceProcessTests(unittest.TestCase):
                     f"{descriptor}.buffer.write(b'x' * 4096)\n"
                     f"{descriptor}.buffer.flush()\n"
                 )
-                status, stdout, stderr = self.make_paths(directory)
+                outputs = self.make_paths(directory)
                 with (
                     mock.patch.object(process_boundary, "STREAM_LIMIT_BYTES", 128),
                     self.assertRaisesRegex(
@@ -136,11 +144,11 @@ class SqEvidenceProcessTests(unittest.TestCase):
                     ),
                 ):
                     process_boundary.run_process(
-                        "tool", status, stdout, stderr, [sys.executable, str(script)]
+                        "tool", outputs, [sys.executable, str(script)]
                     )
-                captured = stdout if stream == "stdout" else stderr
+                captured = outputs.stdout if stream == "stdout" else outputs.stderr
                 self.assertLessEqual(captured.stat().st_size, 128)
-                self.assertFalse(status.exists())
+                self.assertFalse(outputs.status.exists())
 
     def test_child_regular_file_growth_is_bounded(self) -> None:
         with external_temporary_directory(
@@ -153,7 +161,7 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 "import pathlib, sys\n"
                 "pathlib.Path(sys.argv[1]).write_bytes(b'x' * 4096)\n"
             )
-            status, stdout, stderr = self.make_paths(directory)
+            outputs = self.make_paths(directory)
             with (
                 mock.patch.object(process_boundary, "FILE_LIMIT_BYTES", 128),
                 self.assertRaisesRegex(
@@ -163,12 +171,10 @@ class SqEvidenceProcessTests(unittest.TestCase):
             ):
                 process_boundary.run_process(
                     "tool",
-                    status,
-                    stdout,
-                    stderr,
+                    outputs,
                     [sys.executable, str(script), str(artifact)],
                 )
-            self.assertFalse(status.exists())
+            self.assertFalse(outputs.status.exists())
             self.assertLessEqual(artifact.stat().st_size, 128)
 
     def test_non_esrch_cleanup_error_is_visible_and_never_admitted(self) -> None:
@@ -207,13 +213,11 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 "while True:\n"
                 "    time.sleep(1)\n"
             )
-            status, stdout, stderr = self.make_paths(directory)
+            outputs = self.make_paths(directory)
             cleanup_calls: list[tuple[int, int]] = []
             real_killpg = os.killpg
 
-            def deny_group_cleanup(
-                process_group: int, requested_signal: int
-            ) -> None:
+            def deny_group_cleanup(process_group: int, requested_signal: int) -> None:
                 if requested_signal != 0:
                     cleanup_calls.append((process_group, requested_signal))
                 if requested_signal == signal.SIGKILL:
@@ -227,7 +231,15 @@ class SqEvidenceProcessTests(unittest.TestCase):
             descendant_group: int | None = None
             try:
                 with (
-                    mock.patch.object(process_boundary, "TOOL_TIMEOUT_SECONDS", 0.2),
+                    mock.patch.dict(
+                        process_boundary.PROCESS_LIMITS,
+                        {
+                            "tool": process_boundary.ProcessLimits(
+                                timeout_seconds=0.2,
+                                terminate_grace_seconds=0.25,
+                            )
+                        },
+                    ),
                     mock.patch.object(
                         process_boundary.os, "killpg", deny_group_cleanup
                     ),
@@ -238,9 +250,7 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 ):
                     process_boundary.run_process(
                         "tool",
-                        status,
-                        stdout,
-                        stderr,
+                        outputs,
                         [sys.executable, str(script)],
                     )
             finally:
@@ -277,7 +287,7 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 ],
             )
             self.assert_process_gone(int(descendant_pid))
-            self.assertFalse(status.exists())
+            self.assertFalse(outputs.status.exists())
 
     def test_success_reaps_an_ordinary_same_group_descendant(self) -> None:
         with external_temporary_directory(
@@ -312,12 +322,12 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 "    child.wait()\n"
                 "    raise SystemExit(20)\n"
             )
-            status, stdout, stderr = self.make_paths(directory)
+            outputs = self.make_paths(directory)
             child_pid: int | None = None
             child_group: int | None = None
             try:
                 child_status = process_boundary.run_process(
-                    "tool", status, stdout, stderr, [sys.executable, str(script)]
+                    "tool", outputs, [sys.executable, str(script)]
                 )
             finally:
                 if child_pid_path.is_file():
@@ -331,6 +341,50 @@ class SqEvidenceProcessTests(unittest.TestCase):
             self.assertNotEqual(child_pid, child_group)
             self.assertNotEqual(child_group, os.getpgrp())
             self.assert_process_gone(int(child_pid))
+
+    def test_group_cleanup_signals_only_while_leader_is_owned(self) -> None:
+        with external_temporary_directory(
+            ROOT, prefix="sacrysty-process-leader-ownership-test-"
+        ) as directory:
+            root = pathlib.Path(directory)
+            script = root / "exit.py"
+            script.write_text("raise SystemExit(0)\n")
+            outputs = self.make_paths(directory)
+            signal_observations: list[tuple[int, bool]] = []
+
+            def observe_group_signal(process_group: int, requested_signal: int) -> None:
+                if requested_signal == 0:
+                    raise ProcessLookupError(
+                        errno.ESRCH, "constructed absent process group"
+                    )
+                try:
+                    os.waitid(
+                        os.P_PID,
+                        process_group,
+                        os.WEXITED | os.WNOHANG | os.WNOWAIT,
+                    )
+                except ChildProcessError:
+                    leader_is_owned = False
+                else:
+                    leader_is_owned = True
+                signal_observations.append((requested_signal, leader_is_owned))
+
+            # Construct the signal return sequence without signalling a numeric
+            # process group or attempting to force PID reuse.
+            with mock.patch.object(process_boundary.os, "killpg", observe_group_signal):
+                child_status = process_boundary.run_process(
+                    "tool", outputs, [sys.executable, str(script)]
+                )
+
+            self.assertEqual(child_status, 0)
+            self.assertEqual(outputs.status.read_text(), "0\n")
+            self.assertTrue(signal_observations)
+            self.assertTrue(
+                all(
+                    leader_is_owned for _signal, leader_is_owned in signal_observations
+                ),
+                "cleanup reached a process group after its leader was reaped",
+            )
 
     def test_transient_eperm_check_requires_eventual_group_absence(self) -> None:
         with external_temporary_directory(
@@ -365,7 +419,7 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 "    child.wait()\n"
                 "    raise SystemExit(20)\n"
             )
-            status, stdout, stderr = self.make_paths(directory)
+            outputs = self.make_paths(directory)
             real_killpg = os.killpg
             post_terminate_denials = 2
             cleanup_signals: list[int] = []
@@ -381,7 +435,10 @@ class SqEvidenceProcessTests(unittest.TestCase):
                     return
                 # This constructs only the userspace return sequence from the
                 # macOS failure; Linux is not reproducing XNU kernel behavior.
-                if cleanup_signals == [signal.SIGTERM] and post_terminate_denials:
+                if (
+                    cleanup_signals == [signal.SIGTERM, signal.SIGKILL]
+                    and post_terminate_denials
+                ):
                     post_terminate_denials -= 1
                     raise PermissionError(
                         errno.EPERM, "constructed zombie-only process group"
@@ -401,7 +458,7 @@ class SqEvidenceProcessTests(unittest.TestCase):
                     construct_xnu_zombie_only_return_sequence,
                 ):
                     child_status = process_boundary.run_process(
-                        "tool", status, stdout, stderr, [sys.executable, str(script)]
+                        "tool", outputs, [sys.executable, str(script)]
                     )
             finally:
                 if child_pid_path.is_file():
@@ -410,7 +467,7 @@ class SqEvidenceProcessTests(unittest.TestCase):
                     )
                     self.addCleanup(_terminate_if_alive, child_pid)
             self.assertEqual(child_status, 0)
-            self.assertEqual(cleanup_signals, [signal.SIGTERM])
+            self.assertEqual(cleanup_signals, [signal.SIGTERM, signal.SIGKILL])
             self.assertEqual(post_terminate_denials, 0)
             self.assertTrue(definitive_absence_observed)
             self.assertIsNotNone(child_pid)
@@ -434,7 +491,7 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 "while True:\n"
                 "    time.sleep(1)\n"
             )
-            status, stdout, stderr = self.make_paths(directory)
+            outputs = self.make_paths(directory)
             real_killpg = os.killpg
             cleanup_signals: list[int] = []
             denied_checks = 0
@@ -444,7 +501,6 @@ class SqEvidenceProcessTests(unittest.TestCase):
             ) -> None:
                 nonlocal denied_checks
                 if requested_signal == 0:
-                    real_killpg(process_group, requested_signal)
                     denied_checks += 1
                     raise PermissionError(
                         errno.EPERM, "constructed persistent process-group denial"
@@ -456,9 +512,14 @@ class SqEvidenceProcessTests(unittest.TestCase):
             started = time.monotonic()
             try:
                 with (
-                    mock.patch.object(process_boundary, "TOOL_TIMEOUT_SECONDS", 0.2),
-                    mock.patch.object(
-                        process_boundary, "TERMINATE_GRACE_SECONDS", 0.03
+                    mock.patch.dict(
+                        process_boundary.PROCESS_LIMITS,
+                        {
+                            "tool": process_boundary.ProcessLimits(
+                                timeout_seconds=0.2,
+                                terminate_grace_seconds=0.03,
+                            )
+                        },
                     ),
                     mock.patch.object(
                         process_boundary.os,
@@ -471,34 +532,34 @@ class SqEvidenceProcessTests(unittest.TestCase):
                     ),
                 ):
                     process_boundary.run_process(
-                        "tool", status, stdout, stderr, [sys.executable, str(script)]
+                        "tool", outputs, [sys.executable, str(script)]
                     )
             finally:
                 elapsed = time.monotonic() - started
                 if selected_pid_path.is_file():
                     selected_pid = int(selected_pid_path.read_text())
                     self.addCleanup(_terminate_if_alive, selected_pid)
-            self.assertEqual(cleanup_signals, [signal.SIGTERM])
+            self.assertEqual(cleanup_signals, [signal.SIGTERM, signal.SIGKILL])
             self.assertGreater(denied_checks, 1)
             self.assertLess(elapsed, 2.0)
             self.assertIsNotNone(selected_pid)
             self.assert_process_gone(int(selected_pid))
-            self.assertFalse(status.exists())
+            self.assertFalse(outputs.status.exists())
 
     def test_cli_preserves_a_bounded_child_exit_status(self) -> None:
         with external_temporary_directory(
             ROOT, prefix="sacrysty-process-cli-test-"
         ) as directory:
-            status, stdout, stderr = self.make_paths(directory)
+            outputs = self.make_paths(directory)
             result = subprocess.run(
                 [
                     sys.executable,
                     "-B",
                     str(pathlib.Path(process_boundary.__file__)),
                     "tool",
-                    str(status),
-                    str(stdout),
-                    str(stderr),
+                    str(outputs.status),
+                    str(outputs.stdout),
+                    str(outputs.stderr),
                     "--",
                     sys.executable,
                     "-c",
@@ -509,8 +570,36 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(status.read_text(), "7\n")
-            self.assertEqual(stderr.read_text(), "rejected\n")
+            self.assertEqual(outputs.status.read_text(), "7\n")
+            self.assertEqual(outputs.stderr.read_text(), "rejected\n")
+
+    def test_named_output_paths_keep_status_and_streams_distinct(self) -> None:
+        with external_temporary_directory(
+            ROOT, prefix="sacrysty-process-output-paths-test-"
+        ) as directory:
+            paths = self.make_paths(directory)
+            outputs = process_boundary.ProcessOutputPaths(
+                stderr=paths.stderr,
+                status=paths.status,
+                stdout=paths.stdout,
+            )
+            child_status = process_boundary.run_process(
+                "tool",
+                outputs,
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "import sys; print('out'); print('err', file=sys.stderr); "
+                        "raise SystemExit(7)"
+                    ),
+                ],
+            )
+
+            self.assertEqual(child_status, 7)
+            self.assertEqual(outputs.status.read_text(), "7\n")
+            self.assertEqual(outputs.stdout.read_text(), "out\n")
+            self.assertEqual(outputs.stderr.read_text(), "err\n")
 
     def test_terminating_the_helper_reaps_its_selected_process_group(self) -> None:
         with external_temporary_directory(
@@ -526,16 +615,16 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 "while True:\n"
                 "    time.sleep(1)\n"
             )
-            status, stdout, stderr = self.make_paths(directory)
+            outputs = self.make_paths(directory)
             helper = subprocess.Popen(
                 [
                     sys.executable,
                     "-B",
                     str(pathlib.Path(process_boundary.__file__)),
                     "tool",
-                    str(status),
-                    str(stdout),
-                    str(stderr),
+                    str(outputs.status),
+                    str(outputs.stdout),
+                    str(outputs.stderr),
                     "--",
                     sys.executable,
                     str(script),
@@ -557,7 +646,7 @@ class SqEvidenceProcessTests(unittest.TestCase):
             helper.communicate(timeout=3)
 
             self.assert_process_gone(selected_pid)
-            self.assertFalse(status.exists())
+            self.assertFalse(outputs.status.exists())
 
     def test_termination_during_process_startup_reaps_the_selected_group(self) -> None:
         with external_temporary_directory(
@@ -573,7 +662,7 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 "while True:\n"
                 "    time.sleep(1)\n"
             )
-            status, stdout, stderr = self.make_paths(directory)
+            outputs = self.make_paths(directory)
             caller = root / "caller.py"
             caller.write_text(
                 "import os, pathlib, signal, sys, time\n"
@@ -596,9 +685,9 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 "cancel_after_selected_process_starts\n"
                 "raise SystemExit(process_boundary.main([\n"
                 "    'tool',\n"
-                f"    {str(status)!r},\n"
-                f"    {str(stdout)!r},\n"
-                f"    {str(stderr)!r},\n"
+                f"    {str(outputs.status)!r},\n"
+                f"    {str(outputs.stdout)!r},\n"
+                f"    {str(outputs.stderr)!r},\n"
                 "    '--',\n"
                 "    sys.executable,\n"
                 f"    {str(tool)!r},\n"
@@ -611,9 +700,7 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 stderr=subprocess.PIPE,
                 text=True,
             )
-            self.addCleanup(
-                _clean_process_tree, caller_process, (selected_pid_path,)
-            )
+            self.addCleanup(_clean_process_tree, caller_process, (selected_pid_path,))
 
             _caller_stdout, caller_stderr = caller_process.communicate(timeout=5)
 
@@ -623,7 +710,7 @@ class SqEvidenceProcessTests(unittest.TestCase):
             selected_pid = int(selected_pid_path.read_text())
             self.assertNotEqual(caller_process.returncode, 0)
             self.assert_process_gone(selected_pid)
-            self.assertFalse(status.exists(), caller_stderr)
+            self.assertFalse(outputs.status.exists(), caller_stderr)
 
 
 if __name__ == "__main__":

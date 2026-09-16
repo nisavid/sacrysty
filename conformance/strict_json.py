@@ -1,4 +1,4 @@
-"""One strict JSON decoder for serialized conformance inputs."""
+"""One strict JSON decoder for serialized conformance and adapter inputs."""
 
 from __future__ import annotations
 

@@ -16,7 +16,7 @@ import time
 
 ROOT = pathlib.Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT))
-import adapters.fido_custody as fido_custody
+from adapters import fido_custody
 from adapters.fido_custody import CustodyError, CustodyRequest, OneShotCustodyAdapter
 from conformance.test_support import external_temporary_directory
 
@@ -125,6 +125,8 @@ if case == "mismatch":
     message["plugin_digest"] = "sha256:wrong"
 if case == "bad-uv":
     message["uv_mode"] = []
+if case == "non-finite":
+    message["timing_class"] = float("nan")
 if case == "duplicate":
     encoded = json.dumps(message, separators=(",", ":"))
     print('{"status":"rejected",' + encoded[1:], end="")
@@ -275,9 +277,7 @@ def require_pid_marker_producer_state(
     producer: subprocess.Popen[bytes], state: str
 ) -> None:
     require(producer.stdout is not None, "PID marker producer stdout was not piped")
-    readable, _writable, _exceptional = select.select(
-        (producer.stdout,), (), (), 2.0
-    )
+    readable, _writable, _exceptional = select.select((producer.stdout,), (), (), 2.0)
     require(bool(readable), f"PID marker producer did not reach its {state} barrier")
     observed_state = producer.stdout.readline()
     require(
@@ -361,12 +361,34 @@ def process_group_exists(process_group: int) -> bool:
         os.killpg(process_group, 0)
     except ProcessLookupError:
         return False
+    except PermissionError:
+        return True
     return True
 
 
-def wait_for_process_group_exit(
-    process_group: int, *, timeout_seconds: float
-) -> None:
+def check_permission_denied_group_probe_is_not_absence() -> None:
+    real_killpg = os.killpg
+    calls: list[tuple[int, int]] = []
+
+    def deny_group_probe(process_group: int, requested_signal: int) -> None:
+        calls.append((process_group, requested_signal))
+        raise PermissionError(errno.EPERM, "constructed process-group probe denial")
+
+    try:
+        # Construct only the hosted syscall result at the checker boundary.
+        # This Linux test does not reproduce the observed Darwin condition.
+        os.killpg = deny_group_probe
+        group_exists = process_group_exists(os.getpgrp())
+    finally:
+        os.killpg = real_killpg
+    require(group_exists, "process-group probe inferred absence from EPERM")
+    require(
+        calls == [(os.getpgrp(), 0)],
+        "process-group denial control did not exercise one existence probe",
+    )
+
+
+def wait_for_process_group_exit(process_group: int, *, timeout_seconds: float) -> None:
     deadline = time.monotonic() + timeout_seconds
     while process_group_exists(process_group):
         if time.monotonic() >= deadline:
@@ -379,6 +401,135 @@ def kill_process_group(process_group: int) -> None:
         os.killpg(process_group, signal.SIGKILL)
     except ProcessLookupError:
         pass
+
+
+def check_startup_interruption_owns_worker(
+    command: list[str], environment: dict[str, str]
+) -> None:
+    spawned_processes: list[subprocess.Popen[bytes]] = []
+    real_popen = fido_custody.subprocess.Popen
+    real_killpg = os.killpg
+
+    def interrupt_after_spawn(
+        *arguments: object, **keywords: object
+    ) -> subprocess.Popen[bytes]:
+        process = real_popen(*arguments, **keywords)
+        spawned_processes.append(process)
+        os.kill(os.getpid(), signal.SIGINT)
+        return process
+
+    worker_was_reaped = False
+    try:
+        fido_custody.subprocess.Popen = interrupt_after_spawn
+        try:
+            OneShotCustodyAdapter(
+                command,
+                timeout_seconds=1.0,
+                environment=environment,
+            ).unwrap(request_for("timeout"))
+        except KeyboardInterrupt:
+            pass
+        else:
+            raise AssertionError("startup interruption was converted into success")
+        require(len(spawned_processes) == 1, "startup did not create one worker")
+        try:
+            os.waitid(
+                os.P_PID,
+                spawned_processes[0].pid,
+                os.WEXITED | os.WNOHANG | os.WNOWAIT,
+            )
+        except ChildProcessError:
+            worker_was_reaped = True
+    finally:
+        fido_custody.subprocess.Popen = real_popen
+        for process in spawned_processes:
+            if not worker_was_reaped:
+                try:
+                    real_killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait(timeout=2.0)
+    require(worker_was_reaped, "startup interruption left the worker unowned")
+
+
+def check_cleanup_signals_only_owned_process_group(
+    command: list[str], environment: dict[str, str]
+) -> None:
+    signal_observations: list[tuple[int, bool]] = []
+    real_killpg = fido_custody.os.killpg
+
+    def observe_group_signal(process_group: int, requested_signal: int) -> None:
+        if requested_signal == 0:
+            raise ProcessLookupError(errno.ESRCH, "constructed absent process group")
+        try:
+            os.waitid(
+                os.P_PID,
+                process_group,
+                os.WEXITED | os.WNOHANG | os.WNOWAIT,
+            )
+        except ChildProcessError:
+            leader_is_owned = False
+        else:
+            leader_is_owned = True
+        signal_observations.append((requested_signal, leader_is_owned))
+
+    try:
+        # Constructed evidence: observe the cleanup syscall boundary without
+        # sending a signal or attempting to force numeric PID reuse.
+        fido_custody.os.killpg = observe_group_signal
+        result = OneShotCustodyAdapter(command, environment=environment).unwrap(
+            request_for()
+        )
+    finally:
+        fido_custody.os.killpg = real_killpg
+    require(
+        result.plaintext == b"synthetic plaintext canary",
+        "cleanup ownership control did not retain the worker result",
+    )
+    require(
+        signal_observations == [(signal.SIGKILL, True)],
+        "cleanup reached a process group after its leader was reaped",
+    )
+
+
+def check_adapter_group_probe_denial_requires_absence(
+    command: list[str], environment: dict[str, str]
+) -> None:
+    remaining_denials = 2
+    group_probes = 0
+    real_killpg = fido_custody.os.killpg
+
+    def construct_denial_then_absence(
+        _process_group: int, requested_signal: int
+    ) -> None:
+        nonlocal group_probes, remaining_denials
+        if requested_signal != 0:
+            return
+        group_probes += 1
+        if remaining_denials:
+            remaining_denials -= 1
+            raise PermissionError(
+                errno.EPERM, "constructed transient process-group denial"
+            )
+        raise ProcessLookupError(errno.ESRCH, "constructed absent process group")
+
+    try:
+        # Construct only the observed OS return sequence. No numeric process
+        # group is signalled by this regression.
+        fido_custody.os.killpg = construct_denial_then_absence
+        result = OneShotCustodyAdapter(command, environment=environment).unwrap(
+            request_for()
+        )
+    finally:
+        fido_custody.os.killpg = real_killpg
+    require(
+        result.plaintext == b"synthetic plaintext canary",
+        "transient group-probe denial discarded a completed worker result",
+    )
+    require(
+        group_probes == 3 and remaining_denials == 0,
+        "adapter cleanup did not require definitive process-group absence",
+    )
 
 
 def default_pipe_capacity() -> int | None:
@@ -397,6 +548,7 @@ def main() -> None:
     request = request_for()
     with external_temporary_directory(ROOT, prefix="sacrysty-fido-test-") as directory:
         check_pid_marker_readiness(pathlib.Path(directory))
+        check_permission_denied_group_probe_is_not_absence()
         worker = pathlib.Path(directory) / "worker.py"
         worker.write_text(WORKER)
         worker.chmod(worker.stat().st_mode | stat.S_IXUSR)
@@ -406,6 +558,9 @@ def main() -> None:
             "SACRYSTY_TEST_LEAK": "must-not-reach-worker",
         }
         adapter = OneShotCustodyAdapter(command, environment=environment)
+        check_startup_interruption_owns_worker(command, environment)
+        check_cleanup_signals_only_owned_process_group(command, environment)
+        check_adapter_group_probe_denial_requires_absence(command, environment)
         result = adapter.unwrap(request)
         require(
             result.plaintext == b"synthetic plaintext canary",
@@ -445,10 +600,9 @@ def main() -> None:
                 pipe_capacity_exceeding_size > observed_pipe_capacity,
                 "bounded large-input fixture does not exceed pipe capacity",
             )
-        complete_envelope = (
-            f"complete-input:{pipe_capacity_exceeding_size}\n".encode("ascii")
-            + (b"x" * pipe_capacity_exceeding_size)
-        )
+        complete_envelope = f"complete-input:{pipe_capacity_exceeding_size}\n".encode(
+            "ascii"
+        ) + (b"x" * pipe_capacity_exceeding_size)
         large_input_adapter = OneShotCustodyAdapter(
             command,
             timeout_seconds=2.0,
@@ -468,9 +622,7 @@ def main() -> None:
             "worker consuming complete pipe-capacity-exceeding input did not succeed",
         )
 
-        early_close_envelope = b"early-close\n" + (
-            b"x" * pipe_capacity_exceeding_size
-        )
+        early_close_envelope = b"early-close\n" + (b"x" * pipe_capacity_exceeding_size)
         expect_failure(
             OneShotCustodyAdapter(
                 command,
@@ -496,6 +648,7 @@ def main() -> None:
             ("timeout", "worker timeout"),
             ("bad-uv", "unknown UV mode"),
             ("duplicate", "malformed worker output"),
+            ("non-finite", "malformed worker output"),
         ):
             expect_failure(
                 OneShotCustodyAdapter(
@@ -555,9 +708,7 @@ def main() -> None:
                 "worker child with redirected streams survived successful completion"
             )
 
-        cleanup_denied_marker = (
-            pathlib.Path(directory) / "cleanup-denied-child-pid"
-        )
+        cleanup_denied_marker = pathlib.Path(directory) / "cleanup-denied-child-pid"
         denied_process_group: int | None = None
         cleanup_denial_calls: list[tuple[int, int]] = []
         real_killpg = os.killpg
@@ -607,9 +758,7 @@ def main() -> None:
                 except ProcessLookupError:
                     pass
             if denied_process_group is not None:
-                wait_for_process_group_exit(
-                    denied_process_group, timeout_seconds=2.0
-                )
+                wait_for_process_group_exit(denied_process_group, timeout_seconds=2.0)
         require(
             cleanup_denial_calls == [(denied_process_group, signal.SIGKILL)],
             "constructed cleanup denial did not replace one group-kill attempt",

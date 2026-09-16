@@ -14,15 +14,34 @@ from __future__ import annotations
 
 import errno
 import hashlib
-import json
 import os
+import pathlib
 import selectors
 import signal
 import subprocess
+import sys
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import BinaryIO
+
+ROOT = pathlib.Path(__file__).parents[1]
+sys.path.insert(0, str(ROOT))
+
+from conformance.strict_json import StrictJsonError, decode_strict_json
+
+_UNBLOCK_SIGINT_AND_EXEC = r"""
+import os
+import signal
+import sys
+
+try:
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT})
+    os.execvpe(sys.argv[1], sys.argv[1:], os.environ)
+except OSError:
+    os.write(2, b"worker setup failed\n")
+    os._exit(125)
+"""
 
 
 class CustodyError(RuntimeError):
@@ -35,6 +54,10 @@ class _OutputLimitExceeded(Exception):
 
 
 class _WorkerTimedOut(Exception):
+    pass
+
+
+class _WorkerOwnershipLost(Exception):
     pass
 
 
@@ -73,17 +96,6 @@ def _scrub_environment(source: Mapping[str, str] | None) -> dict[str, str]:
     return {key: value for key, value in source.items() if key in allowed}
 
 
-def _object_without_duplicate_keys(
-    pairs: list[tuple[str, object]],
-) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError("duplicate JSON key")
-        result[key] = value
-    return result
-
-
 def _close_pipe(pipe: BinaryIO) -> None:
     try:
         pipe.close()
@@ -120,13 +132,42 @@ def _terminate_and_reap(process: subprocess.Popen[bytes]) -> None:
             pass
         try:
             process.wait(timeout=0.5)
-        except subprocess.TimeoutExpired:
-            # An uninterruptible leader cannot be reaped synchronously. Returning
-            # remains bounded and the public operation still fails closed.
-            pass
+        except subprocess.TimeoutExpired as exc:
+            raise CustodyError("worker cleanup failure") from exc
 
     if group_cleanup_error is not None:
         raise CustodyError("worker cleanup failure") from group_cleanup_error
+
+    deadline = time.monotonic() + 0.5
+    last_permission_denial: PermissionError | None = None
+    while True:
+        try:
+            os.killpg(process.pid, 0)
+        except ProcessLookupError:
+            break
+        except PermissionError as exc:
+            last_permission_denial = exc
+        except OSError as exc:
+            raise CustodyError("worker cleanup failure") from exc
+        else:
+            last_permission_denial = None
+        if time.monotonic() >= deadline:
+            if last_permission_denial is not None:
+                raise CustodyError("worker cleanup failure") from last_permission_denial
+            raise CustodyError("worker cleanup failure")
+        time.sleep(0.01)
+
+
+def _leader_exited_unreaped(process: subprocess.Popen[bytes]) -> bool:
+    try:
+        status = os.waitid(
+            os.P_PID,
+            process.pid,
+            os.WEXITED | os.WNOHANG | os.WNOWAIT,
+        )
+    except ChildProcessError as exc:
+        raise _WorkerOwnershipLost from exc
+    return status is not None
 
 
 def _bounded_communicate(
@@ -201,13 +242,11 @@ def _bounded_communicate(
     finally:
         selector.close()
 
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        raise _WorkerTimedOut
-    try:
-        process.wait(timeout=remaining)
-    except subprocess.TimeoutExpired as exc:
-        raise _WorkerTimedOut from exc
+    while not _leader_exited_unreaped(process):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise _WorkerTimedOut
+        time.sleep(min(0.01, remaining))
     return bytes(buffers["stdout"]), bytes(buffers["stderr"])
 
 
@@ -241,19 +280,35 @@ class OneShotCustodyAdapter:
         if len(request.envelope) > self._max_envelope_bytes:
             raise CustodyError("envelope too large")
         process: subprocess.Popen[bytes] | None = None
+        process_owned = True
         try:
+            previous_signal_mask = signal.pthread_sigmask(
+                signal.SIG_BLOCK, {signal.SIGINT}
+            )
             try:
-                process = subprocess.Popen(
-                    self._command,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    env=self._environment,
-                    close_fds=True,
-                    start_new_session=True,
-                )
-            except OSError as exc:
-                raise CustodyError("worker unavailable") from exc
+                command = self._command
+                if signal.SIGINT not in previous_signal_mask:
+                    command = (
+                        sys.executable,
+                        "-B",
+                        "-c",
+                        _UNBLOCK_SIGINT_AND_EXEC,
+                        *command,
+                    )
+                try:
+                    process = subprocess.Popen(
+                        command,
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        env=self._environment,
+                        close_fds=True,
+                        start_new_session=True,
+                    )
+                except OSError as exc:
+                    raise CustodyError("worker unavailable") from exc
+            finally:
+                signal.pthread_sigmask(signal.SIG_SETMASK, previous_signal_mask)
             try:
                 stdout, _stderr = _bounded_communicate(
                     process,
@@ -269,8 +324,11 @@ class OneShotCustodyAdapter:
                 raise CustodyError("worker output too large") from exc
             except OSError as exc:
                 raise CustodyError("worker I/O failure") from exc
+            except _WorkerOwnershipLost as exc:
+                process_owned = False
+                raise CustodyError("worker ownership lost") from exc
         finally:
-            if process is not None:
+            if process is not None and process_owned:
                 # The leader may have exited while an ordinary same-group
                 # descendant remains. Every completion path requests group
                 # termination and bounded leader reaping.
@@ -280,10 +338,8 @@ class OneShotCustodyAdapter:
         if process.returncode != 0:
             raise CustodyError("worker failure")
         try:
-            message = json.loads(
-                stdout.decode("utf-8"), object_pairs_hook=_object_without_duplicate_keys
-            )
-        except (UnicodeDecodeError, ValueError) as exc:
+            message = decode_strict_json(stdout)
+        except StrictJsonError as exc:
             raise CustodyError("malformed worker output") from exc
         if not isinstance(message, dict) or message.get("status") != "ok":
             raise CustodyError("worker rejected envelope")
