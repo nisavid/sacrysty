@@ -70,6 +70,11 @@ def _group_exists(process_group: int) -> bool:
     return True
 
 
+def _is_permission_denial(error: ProcessBoundaryError) -> bool:
+    cause = error.__cause__
+    return isinstance(cause, OSError) and cause.errno == errno.EPERM
+
+
 def _signal_group(process_group: int, selected_signal: signal.Signals) -> bool:
     try:
         os.killpg(process_group, selected_signal)
@@ -86,13 +91,29 @@ def _signal_group(process_group: int, selected_signal: signal.Signals) -> bool:
 
 def _wait_for_group_exit(process: subprocess.Popen[bytes], seconds: float) -> bool:
     deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
+    last_permission_denial: ProcessBoundaryError | None = None
+    while True:
         process.poll()
-        if not _group_exists(process.pid):
-            return True
-        time.sleep(0.01)
-    process.poll()
-    return not _group_exists(process.pid)
+        try:
+            group_exists = _group_exists(process.pid)
+        except ProcessBoundaryError as exc:
+            if not _is_permission_denial(exc):
+                raise
+            # XNU can return EPERM while an explicit process group contains
+            # only zombies. Require a later ESRCH inside this cleanup window;
+            # a denial that lasts through the deadline remains an error.
+            last_permission_denial = exc
+        else:
+            if not group_exists:
+                return True
+            last_permission_denial = None
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            if last_permission_denial is not None:
+                raise last_permission_denial
+            return False
+        time.sleep(min(0.01, remaining))
 
 
 def _reap_leader_after_group_failure(

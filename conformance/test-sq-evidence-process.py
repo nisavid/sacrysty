@@ -332,6 +332,159 @@ class SqEvidenceProcessTests(unittest.TestCase):
             self.assertNotEqual(child_group, os.getpgrp())
             self.assert_process_gone(int(child_pid))
 
+    def test_transient_eperm_check_requires_eventual_group_absence(self) -> None:
+        with external_temporary_directory(
+            ROOT, prefix="sacrysty-process-group-eperm-test-"
+        ) as directory:
+            root = pathlib.Path(directory)
+            child_pid_path = root / "child-pid"
+            child_program = (
+                "import os, pathlib, time\n"
+                f"pathlib.Path({str(child_pid_path)!r})"
+                ".write_text(f'{os.getpid()}:{os.getpgrp()}')\n"
+                "while True:\n"
+                "    time.sleep(1)\n"
+            )
+            script = root / "spawn-child.py"
+            script.write_text(
+                "import os, pathlib, subprocess, sys, time\n"
+                "child = subprocess.Popen(\n"
+                f"    [sys.executable, '-c', {child_program!r}],\n"
+                "    stdin=subprocess.DEVNULL,\n"
+                "    stdout=subprocess.DEVNULL,\n"
+                "    stderr=subprocess.DEVNULL,\n"
+                ")\n"
+                f"marker = pathlib.Path({str(child_pid_path)!r})\n"
+                "deadline = time.monotonic() + 2\n"
+                "while not marker.is_file() and time.monotonic() < deadline:\n"
+                "    if child.poll() is not None:\n"
+                "        break\n"
+                "    time.sleep(0.01)\n"
+                "if not marker.is_file() or os.getpgid(child.pid) != os.getpgrp():\n"
+                "    child.kill()\n"
+                "    child.wait()\n"
+                "    raise SystemExit(20)\n"
+            )
+            status, stdout, stderr = self.make_paths(directory)
+            real_killpg = os.killpg
+            post_terminate_denials = 2
+            cleanup_signals: list[int] = []
+            definitive_absence_observed = False
+
+            def construct_xnu_zombie_only_return_sequence(
+                process_group: int, requested_signal: int
+            ) -> None:
+                nonlocal definitive_absence_observed, post_terminate_denials
+                if requested_signal != 0:
+                    real_killpg(process_group, requested_signal)
+                    cleanup_signals.append(requested_signal)
+                    return
+                # This constructs only the userspace return sequence from the
+                # macOS failure; Linux is not reproducing XNU kernel behavior.
+                if cleanup_signals == [signal.SIGTERM] and post_terminate_denials:
+                    post_terminate_denials -= 1
+                    raise PermissionError(
+                        errno.EPERM, "constructed zombie-only process group"
+                    )
+                try:
+                    real_killpg(process_group, requested_signal)
+                except ProcessLookupError:
+                    definitive_absence_observed = True
+                    raise
+
+            child_pid: int | None = None
+            child_group: int | None = None
+            try:
+                with mock.patch.object(
+                    process_boundary.os,
+                    "killpg",
+                    construct_xnu_zombie_only_return_sequence,
+                ):
+                    child_status = process_boundary.run_process(
+                        "tool", status, stdout, stderr, [sys.executable, str(script)]
+                    )
+            finally:
+                if child_pid_path.is_file():
+                    child_pid, child_group = map(
+                        int, child_pid_path.read_text().split(":")
+                    )
+                    self.addCleanup(_terminate_if_alive, child_pid)
+            self.assertEqual(child_status, 0)
+            self.assertEqual(cleanup_signals, [signal.SIGTERM])
+            self.assertEqual(post_terminate_denials, 0)
+            self.assertTrue(definitive_absence_observed)
+            self.assertIsNotNone(child_pid)
+            self.assertIsNotNone(child_group)
+            self.assertNotEqual(child_pid, child_group)
+            self.assertNotEqual(child_group, os.getpgrp())
+            self.assert_process_gone(int(child_pid))
+
+    def test_persistent_eperm_check_is_bounded_and_never_admitted(self) -> None:
+        with external_temporary_directory(
+            ROOT, prefix="sacrysty-process-group-persistent-eperm-test-"
+        ) as directory:
+            root = pathlib.Path(directory)
+            selected_pid_path = root / "selected-pid"
+            script = root / "hang.py"
+            script.write_text(
+                "import os, pathlib, signal, time\n"
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                f"pathlib.Path({str(selected_pid_path)!r})"
+                ".write_text(str(os.getpid()))\n"
+                "while True:\n"
+                "    time.sleep(1)\n"
+            )
+            status, stdout, stderr = self.make_paths(directory)
+            real_killpg = os.killpg
+            cleanup_signals: list[int] = []
+            denied_checks = 0
+
+            def deny_checks_while_group_exists(
+                process_group: int, requested_signal: int
+            ) -> None:
+                nonlocal denied_checks
+                if requested_signal == 0:
+                    real_killpg(process_group, requested_signal)
+                    denied_checks += 1
+                    raise PermissionError(
+                        errno.EPERM, "constructed persistent process-group denial"
+                    )
+                real_killpg(process_group, requested_signal)
+                cleanup_signals.append(requested_signal)
+
+            selected_pid: int | None = None
+            started = time.monotonic()
+            try:
+                with (
+                    mock.patch.object(process_boundary, "TOOL_TIMEOUT_SECONDS", 0.2),
+                    mock.patch.object(
+                        process_boundary, "TERMINATE_GRACE_SECONDS", 0.03
+                    ),
+                    mock.patch.object(
+                        process_boundary.os,
+                        "killpg",
+                        deny_checks_while_group_exists,
+                    ),
+                    self.assertRaisesRegex(
+                        process_boundary.ProcessBoundaryError,
+                        r"process-group cleanup check failed \(EPERM\)",
+                    ),
+                ):
+                    process_boundary.run_process(
+                        "tool", status, stdout, stderr, [sys.executable, str(script)]
+                    )
+            finally:
+                elapsed = time.monotonic() - started
+                if selected_pid_path.is_file():
+                    selected_pid = int(selected_pid_path.read_text())
+                    self.addCleanup(_terminate_if_alive, selected_pid)
+            self.assertEqual(cleanup_signals, [signal.SIGTERM])
+            self.assertGreater(denied_checks, 1)
+            self.assertLess(elapsed, 2.0)
+            self.assertIsNotNone(selected_pid)
+            self.assert_process_gone(int(selected_pid))
+            self.assertFalse(status.exists())
+
     def test_cli_preserves_a_bounded_child_exit_status(self) -> None:
         with external_temporary_directory(
             ROOT, prefix="sacrysty-process-cli-test-"
