@@ -11,15 +11,31 @@ explicit about what their evidence proves.
 3. Update normative source before derived fixtures, reference output, or
    documentation.
 4. Use a Conventional Commit message.
-5. Certify the contribution under the Developer Certificate of Origin 1.1 by
-   signing off every commit:
+5. Certify every human-authored commit under the
+   [Developer Certificate of Origin 1.1](https://developercertificate.org/) by
+   adding a sign-off whose name matches the commit author or committer name and
+   whose email independently matches the author or committer email. Name and
+   email comparisons are case-insensitive:
 
    ```sh
    git commit --signoff
    ```
 
-   The sign-off records that you have the right to submit the contribution
-   under this project's license. It is not a cryptographic release signature.
+   Repository members are subject to the same requirement as other human
+   contributors, including for human-authored merge commits. The app's
+   automated enforcement exempts commits with Bot-associated authors and
+   ordinary merge commits. The sign-off records that you have the right to
+   submit the contribution under this project's license; it is not a
+   cryptographic release signature.
+
+   The app recognizes `Signed-off-by: NAME <EMAIL>` trailer lines and compares
+   the captured fields as described above. It does not separately establish
+   that the captured email has general email-address syntax.
+
+   This repository does not accept individual or third-party remediation
+   commits. Amend or recreate your own unsigned commit and sign it off. Do not
+   sign off another contributor's work unless the DCO truthfully permits you to
+   submit it. A maintainer's signed follow-up certifies only that follow-up.
 6. Run `./scripts/check-repository.sh`, `git diff --check`, and every focused
    test or conformance suite for the changed surface.
 
@@ -46,3 +62,8 @@ issue, provenance, compatibility effect, checks run, and whether the change has
 any release, provider, host, ceremony, custody, or production authority.
 Resolve review findings on the same final revision that carries the reported
 evidence.
+
+The maintained DCO GitHub App evaluates pull-request commits. Its `DCO` result
+is the repository enforcement signal; a manual approval by someone with write
+access is an explicit exception, not a replacement sign-off. Maintainers follow
+`docs/agents/dco-provisioning.md` when provisioning or changing that check.
