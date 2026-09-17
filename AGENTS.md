@@ -62,7 +62,8 @@ Use the canonical `needs-triage`, `needs-info`, `ready-for-agent`,
 This is a personal `nisavid` project. Use `Ivan D Vasin <ivan@nisavid.io>` for
 Git work and the `nisavid` GitHub account for repository mutations. Prefix
 branches with `ivan/`. Use Conventional Commits for commits and pull-request
-titles. Sign off every commit under the DCO with `git commit --signoff`.
+titles. Sign off every human-authored commit under the DCO with
+`git commit --signoff`.
 
 Before committing or publishing, run:
 
@@ -72,6 +73,9 @@ git diff --check
 ```
 
 Run every additional test or conformance suite that owns the changed surface.
+
+For DCO provisioning, verification, migration, recovery, and rollback, follow
+the single operating procedure in `docs/agents/dco-provisioning.md`.
 
 ## Change policy
 

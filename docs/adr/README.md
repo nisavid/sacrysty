@@ -8,6 +8,8 @@ conformance changes, threat-model impact, and status.
   domain model and inert-extension boundary.
 - [ADR 0002](0002-genesis-integration-boundary.md) proposes the genesis
   integration boundary and requires review and maintainer approval.
+- [ADR 0003](0003-maintained-dco-github-app.md) selects the maintained hosted
+  DCO GitHub App for contribution enforcement.
 
 The provenance handoff links the pre-repository decisions that constrain this
 work.
