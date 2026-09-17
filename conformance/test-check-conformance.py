@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import shlex
 import shutil
 import signal
 import stat
@@ -434,6 +435,38 @@ class AggregateConformanceTests(unittest.TestCase):
         control.parent.mkdir(exist_ok=True)
         control.write_text(value, encoding="ascii")
 
+    def suppress_runner_exit_fallback(self, environment: dict[str, str]) -> None:
+        """Make mandatory runner finalization prove it does not rely on EXIT."""
+
+        runtime = pathlib.Path(environment["TEST_RUNTIME"])
+        hook = runtime / "suppress-runner-exit-fallback.bash"
+        hook.write_text(
+            r"""suppress_runner_exit_fallback() {
+  case ${BASH_COMMAND:-} in
+    'trap sq_evidence_interrupt_runner TERM' | 'trap interrupt_runner TERM')
+      builtin trap - EXIT
+      builtin trap - DEBUG
+      ;;
+  esac
+}
+builtin trap suppress_runner_exit_fallback DEBUG
+""",
+            encoding="utf-8",
+        )
+        real_bash = shutil.which("bash", path=environment["PATH"])
+        self.assertIsNotNone(real_bash)
+        wrapper = runtime / "bash-without-runner-exit-fallback" / "bash"
+        write_executable(
+            wrapper,
+            "#!/bin/sh\n"
+            'if [ -z "${BASH_ENV:-}" ]; then\n'
+            f"  BASH_ENV={shlex.quote(str(hook))}\n"
+            "  export BASH_ENV\n"
+            "fi\n"
+            f'exec {shlex.quote(str(real_bash))} "$@"\n',
+        )
+        environment["PATH"] = f"{wrapper.parent}{os.pathsep}{environment['PATH']}"
+
     def start_aggregate(
         self, repository: pathlib.Path, environment: dict[str, str]
     ) -> subprocess.Popen[str]:
@@ -758,8 +791,11 @@ trap aggregate_startup_barrier DEBUG
         mode: str,
         *,
         startup_occurrence: int | None = None,
+        suppress_exit_fallback: bool = False,
     ) -> None:
         repository, environment = self.make_actual_runner_repository()
+        if suppress_exit_fallback:
+            self.suppress_runner_exit_fallback(environment)
         runtime = pathlib.Path(environment["TEST_RUNTIME"])
         marker = runtime / f"{target}-{mode}.selected"
         self.set_actual_control(environment, "target", target)
@@ -841,6 +877,43 @@ trap actual_probe_startup_barrier DEBUG
             for mode in ("hang-delay", "hang-ignore"):
                 with self.subTest(target=target, mode=mode):
                     self.assert_actual_runner_cancellation(target, mode)
+
+    def test_actual_runner_error_and_signal_cleanup_precede_exit_fallback(
+        self,
+    ) -> None:
+        repository, environment = self.make_actual_runner_repository()
+        self.suppress_runner_exit_fallback(environment)
+        environment["SQ"] = str(
+            pathlib.Path(environment["TEST_RUNTIME"]) / "missing-sq"
+        )
+
+        result = self.run_aggregate(repository, environment)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("crypto-conformance probe exited with status 1", result.stderr)
+        self.assertNotIn("complete conformance checks passed", result.stdout)
+        self.assert_no_disposable_runner_paths(environment)
+
+        for target in ("run-sq", "run-signing-profile"):
+            with self.subTest(target=target, path="error"):
+                repository, environment = self.make_actual_runner_repository()
+                self.suppress_runner_exit_fallback(environment)
+                self.set_actual_control(environment, "target", target)
+                self.set_actual_control(environment, "mode", "failure")
+
+                result = self.run_aggregate(repository, environment)
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    "classical key generation exited with status 70", result.stderr
+                )
+                self.assertNotIn("complete conformance checks passed", result.stdout)
+                self.assert_no_disposable_runner_paths(environment)
+
+            with self.subTest(target=target, path="signal"):
+                self.assert_actual_runner_cancellation(
+                    target, "hang-ignore", suppress_exit_fallback=True
+                )
 
     def test_missing_runner_receipt_fails_and_retains_result_storage(self) -> None:
         repository, environment = self.make_repository()

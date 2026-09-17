@@ -1,18 +1,11 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 umask 077
 
 # Public, disposable profile evidence. Every key and signature is created in a
 # temporary directory; the default personal stores are disabled.
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 source "$root/conformance/sq-evidence-lib.sh"
-sq_bin=${SQ:-sq}
-sqv_bin=${SQV:-sqv}
-sq_evidence_require_tools "$sq_bin" "$sqv_bin"
-sq_evidence_require_clean_source "$root" signing-profile
-sq_evidence_select_hash_tools
-temporary_root=$(sq_evidence_external_tmp_root "$root")
-
 work=
 cleanup_work() {
   if [[ -n ${work:-} ]]; then
@@ -23,8 +16,30 @@ cleanup_work() {
     sq_evidence_write_runner_cleanup_receipt
   fi
 }
+# shellcheck disable=SC2329 # Invoked by the ERR trap below.
+fail_runner() {
+  local status=$1
+  if ((BASH_SUBSHELL > 0)); then
+    return "$status"
+  fi
+  sq_evidence_exit_runner \
+    "$status" "${work:-}" 'temporary signing-profile directory' 0
+}
+# shellcheck disable=SC2329 # Invoked by the TERM trap below.
+interrupt_runner() {
+  sq_evidence_exit_runner \
+    143 "${work:-}" 'temporary signing-profile directory' 1
+}
 trap cleanup_work EXIT
-trap sq_evidence_interrupt_runner TERM
+trap 'fail_runner $?' ERR
+trap interrupt_runner TERM
+
+sq_bin=${SQ:-sq}
+sqv_bin=${SQV:-sqv}
+sq_evidence_require_tools "$sq_bin" "$sqv_bin"
+sq_evidence_require_clean_source "$root" signing-profile
+sq_evidence_select_hash_tools
+temporary_root=$(sq_evidence_external_tmp_root "$root")
 work=$(mktemp -d "$temporary_root/sacrysty-signing-profile.XXXXXX")
 message="$work/message.bin"
 cp "$root/fixtures/signing/message.bin" "$message"
@@ -83,7 +98,7 @@ if ! cleanup_work || [[ -e $removed_work ]]; then
   exit 1
 fi
 work=
-trap - EXIT
+trap - ERR EXIT TERM
 cat <<EOF_JSON
 {
   "schema": "io.nisavid.sacrysty.signing-profile-result/v1",

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import selectors
@@ -105,6 +106,7 @@ PROCESS_LIMITS = {
     ),
 }
 _LIMIT_AND_EXEC = r"""
+import json
 import os
 import resource
 import signal
@@ -112,9 +114,18 @@ import sys
 
 try:
     limit = int(sys.argv[1])
+    selected_environment = json.loads(sys.argv[2])
+    if not isinstance(selected_environment, dict) or any(
+        not isinstance(name, str) or not isinstance(value, str)
+        for name, value in selected_environment.items()
+    ):
+        raise ValueError("selected process environment is invalid")
+    command = sys.argv[3:]
+    if not command:
+        raise ValueError("selected process command is empty")
     resource.setrlimit(resource.RLIMIT_FSIZE, (limit, limit))
     signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM})
-    os.execvpe(sys.argv[2], sys.argv[2:], os.environ)
+    os.execvpe(command[0], command, selected_environment)
 except Exception as error:
     os.write(2, f"selected process setup failed: {error}\n".encode("utf-8", "replace"))
     os._exit(125)
@@ -232,6 +243,12 @@ def _selected_environment(
             "PYTHONDONTWRITEBYTECODE": "1",
         }
     )
+    if sys.platform == "darwin":
+        # macOS process startup can add this key while the Python exec wrapper
+        # runs. Supply a value-free runtime-derived value so the final selected
+        # environment remains explicit rather than forwarding an ambient value
+        # or admitting a startup-added key after the fact.
+        environment["__CF_USER_TEXT_ENCODING"] = f"0x{os.getuid():X}:0:0"
     if mode == "probe":
         for name in ("SQ", "SQV"):
             selected = os.environ.get(name)
@@ -313,6 +330,12 @@ def run_process(
     if any(path.exists() for path in reserved_paths):
         raise ProcessBoundaryError("selected process output path already exists")
     selected_environment = _selected_environment(mode, output_paths)
+    serialized_environment = json.dumps(
+        selected_environment,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
     try:
         stdout_file = output_paths.stdout.open("xb")
@@ -367,6 +390,7 @@ def run_process(
                         "-c",
                         _LIMIT_AND_EXEC,
                         str(FILE_LIMIT_BYTES),
+                        serialized_environment,
                         *command,
                     ],
                     stdin=subprocess.DEVNULL,

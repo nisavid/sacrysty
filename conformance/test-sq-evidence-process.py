@@ -876,6 +876,7 @@ class SqEvidenceProcessTests(unittest.TestCase):
             "SACRYSTY_SYNTHETIC_SENTINEL": "must-not-cross-boundary",
             "SQ": "/value-free/sq",
             "SQV": "/value-free/sqv",
+            "__CF_USER_TEXT_ENCODING": "caller-value-must-not-cross-boundary",
         }
         for mode in ("tool", "probe"):
             with self.subTest(mode), external_temporary_directory(
@@ -899,6 +900,8 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 )
                 observed = json.loads(outputs.stdout.read_text())
                 expected_keys = set(allowed_common)
+                if sys.platform == "darwin":
+                    expected_keys.add("__CF_USER_TEXT_ENCODING")
                 if mode == "probe":
                     expected_keys.update(
                         {"SACRYSTY_RUNNER_CLEANUP_RECEIPT", "SQ", "SQV"}
@@ -906,6 +909,13 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 self.assertEqual(set(observed), expected_keys)
                 self.assertNotIn("SACRYSTY_SYNTHETIC_SENTINEL", observed)
                 self.assertEqual(observed["PATH"], os.defpath)
+                if sys.platform == "darwin":
+                    self.assertEqual(
+                        observed["__CF_USER_TEXT_ENCODING"],
+                        f"0x{os.getuid():X}:0:0",
+                    )
+                else:
+                    self.assertNotIn("__CF_USER_TEXT_ENCODING", observed)
                 for name in (
                     "GNUPGHOME",
                     "HOME",
@@ -923,6 +933,45 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 else:
                     self.assertEqual(observed["SQ"], selected["SQ"])
                     self.assertEqual(observed["SQV"], selected["SQV"])
+
+    def test_constructed_darwin_environment_replaces_the_caller_encoding(
+        self,
+    ) -> None:
+        selected = {
+            "PATH": os.defpath,
+            "__CF_USER_TEXT_ENCODING": "caller-value-must-not-cross-boundary",
+        }
+        with external_temporary_directory(
+            ROOT, prefix="sacrysty-darwin-environment-test-"
+        ) as directory, mock.patch.dict(
+            os.environ, selected, clear=True
+        ), mock.patch.object(
+            process_boundary.sys, "platform", "darwin"
+        ):
+            outputs = self.make_paths(directory)
+            self.assertEqual(
+                process_boundary.run_process(
+                    "tool",
+                    outputs,
+                    [
+                        sys.executable,
+                        "-c",
+                        (
+                            "import json, os; "
+                            "print(json.dumps(dict(os.environ), sort_keys=True))"
+                        ),
+                    ],
+                ),
+                0,
+            )
+            observed = json.loads(outputs.stdout.read_text())
+            self.assertEqual(
+                observed["__CF_USER_TEXT_ENCODING"], f"0x{os.getuid():X}:0:0"
+            )
+            self.assertNotEqual(
+                observed["__CF_USER_TEXT_ENCODING"],
+                selected["__CF_USER_TEXT_ENCODING"],
+            )
 
     def test_terminating_the_helper_reaps_its_selected_process_group(self) -> None:
         with external_temporary_directory(

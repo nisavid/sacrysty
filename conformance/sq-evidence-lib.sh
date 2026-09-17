@@ -141,16 +141,11 @@ PY
   sq_evidence_confirm_active_process_cleanup
 }
 
-sq_evidence_interrupt_runner() {
-  if ! sq_evidence_await_active_process_cleanup; then
-    exit 1
-  fi
-  exit 143
-}
-
 sq_evidence_write_runner_cleanup_receipt() {
   local receipt=${SACRYSTY_RUNNER_CLEANUP_RECEIPT:-}
   local expected_parent
+  local noclobber_was_set=
+  local previous_umask
   local receipt_parent
   if [[ -z $receipt ]]; then
     return
@@ -165,7 +160,25 @@ sq_evidence_write_runner_cleanup_receipt() {
     printf 'runner cleanup receipt path is invalid\n' >&2
     return 1
   fi
-  (umask 077 && printf '%s\n' "$SQ_EVIDENCE_RUNNER_CLEANUP_RECEIPT" >"$receipt")
+  previous_umask=$(umask)
+  if [[ -o noclobber ]]; then
+    noclobber_was_set=1
+  else
+    set -o noclobber
+  fi
+  umask 077
+  if ! printf '%s\n' "$SQ_EVIDENCE_RUNNER_CLEANUP_RECEIPT" >"$receipt"; then
+    umask "$previous_umask"
+    if [[ -z $noclobber_was_set ]]; then
+      set +o noclobber
+    fi
+    printf 'runner cleanup receipt cannot be written\n' >&2
+    return 1
+  fi
+  umask "$previous_umask"
+  if [[ -z $noclobber_was_set ]]; then
+    set +o noclobber
+  fi
 }
 
 sq_evidence_finish_runner_cleanup() {
@@ -174,6 +187,32 @@ sq_evidence_finish_runner_cleanup() {
   sq_evidence_confirm_active_process_cleanup || return 1
   sq_evidence_remove_and_verify "$path" "$label" || return 1
   sq_evidence_write_runner_cleanup_receipt
+}
+
+sq_evidence_exit_runner() {
+  local requested_status=$1
+  local path=$2
+  local label=$3
+  local await_active_cleanup=$4
+  local final_status=$requested_status
+
+  # Error and signal paths own mandatory finalization directly. EXIT remains a
+  # fallback for shell failures that do not reach either catchable path.
+  trap - ERR EXIT
+  trap '' INT TERM
+  if [[ $await_active_cleanup == 1 ]] &&
+    ! sq_evidence_await_active_process_cleanup; then
+    final_status=1
+  fi
+  if [[ -n $path ]]; then
+    if ! sq_evidence_finish_runner_cleanup "$path" "$label"; then
+      final_status=1
+    fi
+  elif ! sq_evidence_confirm_active_process_cleanup ||
+    ! sq_evidence_write_runner_cleanup_receipt; then
+    final_status=1
+  fi
+  exit "$final_status"
 }
 
 sq_evidence_result_paths() {

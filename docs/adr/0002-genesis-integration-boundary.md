@@ -55,8 +55,12 @@ Each inner helper proves group absence, the runner consumes that receipt before
 deleting its material and writing its own receipt, and the outer helper proves
 runner-group absence before admitting the receipt or deleting aggregate result
 storage. Selected processes receive an explicit value-free environment rather
-than the caller's complete environment. Missing receipts, live descendants,
-and persistent denial fail. These controls are not a malicious-process sandbox.
+than the caller's complete environment. The final exec reconstructs that exact
+allowlist, including a synthesized value-free macOS text-encoding setting, and
+never forwards the caller's corresponding value. Runner errors and catchable
+termination finalize cleanup directly; an exit trap is only a fallback. Missing
+receipts, live descendants, and persistent denial fail. These controls are not
+a malicious-process sandbox.
 Post-quantum capability remains subject to the existing positive-operation and
 independent-verification gate; explicit unsupported capability, indeterminate
 probe failure, and failed round trip remain distinct results.

@@ -76,6 +76,13 @@ closed on timeout, overflow, live descendants, persistent denial, or cleanup
 failure; they are not a sandbox for a process that deliberately escapes its
 group or a recovery mechanism for uncatchable parent death.
 
+Runner error and catchable-termination paths finalize their active helper and
+disposable material before exiting; the shell exit trap is only a fallback. The
+process helper reconstructs the selected environment from its explicit
+serialized allowlist immediately before exec. On macOS it synthesizes the
+startup `__CF_USER_TEXT_ENCODING` from the user ID with zero encoding and
+region fields instead of forwarding an ambient value.
+
 The runner result contains self-reported tool versions, not executable,
 platform, or dependency identity. Bind those identities in a separate
 validation or qualification receipt alongside the exact source commit, fixture

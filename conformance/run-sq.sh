@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 umask 077
 
 # Public, disposable conformance probe. It creates all key material in a
@@ -7,13 +7,6 @@ umask 077
 # certificate store.
 root_dir=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 source "$root_dir/conformance/sq-evidence-lib.sh"
-sq_bin=${SQ:-sq}
-sqv_bin=${SQV:-sqv}
-sq_evidence_require_tools "$sq_bin" "$sqv_bin"
-sq_evidence_require_clean_source "$root_dir" conformance
-sq_evidence_select_hash_tools
-temporary_root=$(sq_evidence_external_tmp_root "$root_dir")
-
 work_dir=
 cleanup_work_dir() {
   if [[ -n ${work_dir:-} ]]; then
@@ -24,8 +17,30 @@ cleanup_work_dir() {
     sq_evidence_write_runner_cleanup_receipt
   fi
 }
+# shellcheck disable=SC2329 # Invoked by the ERR trap below.
+fail_runner() {
+  local status=$1
+  if ((BASH_SUBSHELL > 0)); then
+    return "$status"
+  fi
+  sq_evidence_exit_runner \
+    "$status" "${work_dir:-}" 'temporary conformance directory' 0
+}
+# shellcheck disable=SC2329 # Invoked by the TERM trap below.
+interrupt_runner() {
+  sq_evidence_exit_runner \
+    143 "${work_dir:-}" 'temporary conformance directory' 1
+}
 trap cleanup_work_dir EXIT
-trap sq_evidence_interrupt_runner TERM
+trap 'fail_runner $?' ERR
+trap interrupt_runner TERM
+
+sq_bin=${SQ:-sq}
+sqv_bin=${SQV:-sqv}
+sq_evidence_require_tools "$sq_bin" "$sqv_bin"
+sq_evidence_require_clean_source "$root_dir" conformance
+sq_evidence_select_hash_tools
+temporary_root=$(sq_evidence_external_tmp_root "$root_dir")
 work_dir=$(mktemp -d "$temporary_root/sacrysty-conformance.XXXXXX")
 
 message="$work_dir/message.txt"
@@ -142,7 +157,7 @@ if ! cleanup_work_dir || [[ -e $removed_work_dir ]]; then
   exit 1
 fi
 work_dir=
-trap - EXIT
+trap - ERR EXIT TERM
 
 cat <<EOF
 {

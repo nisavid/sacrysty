@@ -48,7 +48,11 @@ The process helper builds an explicit environment for every selected process.
 It passes only a selected `PATH`, isolated temporary, home, XDG, GnuPG, and Git
 settings, deterministic locale settings, and, for probe runners, the selected
 `SQ` and `SQV` paths and a private cleanup-receipt path. Other caller variables
-do not cross the boundary.
+do not cross the boundary. Before the final exec, the helper reconstructs that
+exact environment from its serialized allowlist so runtime-added wrapper keys
+cannot propagate. On macOS it supplies a value-free `__CF_USER_TEXT_ENCODING`
+from the runtime user ID with zero encoding and region fields; it never forwards
+the caller's value.
 
 Each helper owns its `Popen` session leader until reaping. It sends nonzero
 group signals only during that ownership, then requires definitive signal-zero
@@ -57,6 +61,8 @@ cancellation, the runner waits for its active tool helper's receipt, deletes
 its disposable material, and writes a runner receipt. The outer helper has a
 separate cooperative window, cleans and reaps the runner group, validates that
 runner receipt, and only then lets the aggregate remove its result directory.
+Ordinary-error and catchable-termination handlers perform runner finalization
+directly; the shell's exit trap is only a fallback.
 Denial, live descendants, missing evidence, and bounded absence failures remain
 failures. Timeout, output overflow, and file-growth failure likewise cannot
 become unsupported or positive observations.
