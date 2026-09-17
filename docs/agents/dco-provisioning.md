@@ -18,9 +18,12 @@ repository coordinator may change the installation or repository settings.
 - GitHub App `DCO`, app ID `1861`, is installed for the exact intended
   repositories, including `nisavid/sacrysty`. Unrelated selections are
   preserved.
-- No `.github/dco.yml` is present. Default automated enforcement requires
-  sign-off from non-exempt humans and repository members, exempts commits with
-  Bot-associated authors and ordinary merge commits per commit, and disables
+- Effective configuration is the reviewed source defaults. At the
+  default-branch revisions Probot actually resolves, no `.github/dco.yml` is
+  supplied by `nisavid/sacrysty` or by the owner configuration repository
+  `nisavid/.github`, directly or through `_extends`. The defaults require
+  sign-off from non-exempt humans and repository members, exempt commits with
+  Bot-associated authors and ordinary merge commits per commit, and disable
   individual and third-party remediation.
 - The parser recognizes a `Signed-off-by: NAME <EMAIL>` trailer line. Its
   captured name and email are compared case-insensitively, and each field
@@ -54,22 +57,26 @@ signing them on a bot's behalf.
    a Bot commit plus an unsigned human commit rejects the human commit, and
    that a Bot commit plus a signed human commit succeeds. Keep the fixture
    receipts and completion state in the owning issue.
-2. **Repository-source evidence** establishes removal of the local checker,
-   absence of a configuration override, and agreement of maintained docs. It
+2. **Repository-source evidence** establishes removal of the local checker and
+   agreement of maintained docs. Its tree can show whether the candidate adds
+   repository-local configuration, but it cannot establish effective
+   configuration because Probot also reads owner-level default-branch state. It
    does not prove hosted delivery or settings.
 3. **Hosted integration evidence** establishes only the selected repositories,
    approved installation permissions, registered app identity, observed check
-   origin and head, recheck response, and repository-setting readback at the
-   time recorded.
+   origin and head, recheck response, configuration-path readbacks at their
+   resolving revisions, and repository-setting readback at the time recorded.
 
 Do not reproduce every upstream fixture as a hosted pull request. The one
 required hosted negative is the missing-signoff human failure specified below;
 keep the additional parser, merge, membership, remediation, and negative cases
-at the fixture layer. Repeat hosted evidence only when its pull-request head,
-selected repository, approved permission, app registration, or required-check
-rule changes.
+at the fixture layer. Repeat hosted behavior evidence only when its pull-request
+head, selected repository, approved permission, app registration, qualified
+effective configuration, or required-check rule changes. Refreshing a
+conclusive absence readback at a new resolving revision does not require hosted
+duplicates of parser, membership, or remediation cases.
 
-## Verify registration and installation
+## Verify effective configuration, registration, and installation
 
 Read the public app registration and retain its app ID, registered permissions,
 and events:
@@ -94,8 +101,25 @@ does not imply any token or configuration change. Use the signed-in settings UI
 as the supported fallback. Ask the user to log in only if access to that UI is
 actually blocked.
 
-Confirm the tested base has no `.github/dco.yml`. Its absence selects
-`require.members: true`, `allowRemediationCommits.individual: false`, and
+Resolve the actual default branch and exact head commit for
+`nisavid/sacrysty` and, when it exists and is readable, the owner configuration
+repository `nisavid/.github`. Retain secret-free repository metadata and exact
+`.github/dco.yml` path readbacks at those commits. If the owner configuration
+repository does not exist, retain the repository-metadata response showing
+conclusively that there is no resolving revision. Retain each endpoint, response
+status and body, and the request's public or authenticated access context,
+including the authenticated identity, repository visibility, and known read
+access.
+
+Count a path as absent only when that access context and repository metadata
+make the response conclusive. A 403, ambiguous 404, inaccessible repository,
+unresolved default branch, or unreadable path is missing evidence, not proof of
+absence. If either path supplies a file, including one with `_extends`, stop for
+a scope and qualification decision. Do not accept configured or inherited
+policy as defaults, evaluate an inheritance chain, change YAML, or broaden
+remote access under this procedure. Only conclusive absence at both resolution
+paths selects `require.members: true`,
+`allowRemediationCommits.individual: false`, and
 `allowRemediationCommits.thirdParty: false` in the reviewed source.
 
 ## Inspect a current applicable check
@@ -146,9 +170,10 @@ Read the complete applicable rule before choosing a path, and classify every
 required-check entry for these two identities:
 
 - If only `DCO` from integration `1861` is required, verify the complete routine
-  state, including configuration, selected repositories, approved permissions,
-  current applicable automated success, and the whole desired rule. Record that
-  verification as a no-op with no installation or ruleset mutation.
+  state, including both configuration-path readbacks at their actual resolving
+  revisions, selected repositories, approved permissions, current applicable
+  automated success, and the whole desired rule. Record that verification as a
+  no-op with no installation or ruleset mutation.
 - If only `DCO compliance` from GitHub Actions integration `15368` is required,
   start the staged migration below and keep it active through the switch.
 - If both identities, neither identity, or a duplicate of either identity is
@@ -160,8 +185,9 @@ Never add the old required check to make the staged migration reachable.
 
 Record the migration pull request's head and base, the complete applicable
 ruleset, required checks with integration IDs, the public registration
-readback, and the installation settings readback. Discover the applicable
-ruleset live rather than assuming a stored numeric ID:
+readback, both effective-configuration path readbacks, and the installation
+settings readback. Discover the applicable ruleset live rather than assuming a
+stored numeric ID:
 
 ```sh
 gh api /repos/nisavid/sacrysty/rulesets --paginate \
@@ -193,8 +219,9 @@ parser, merge, membership, or remediation cases on GitHub.
 
 ### 3. Replace the required check and land the migration
 
-Immediately before the write, confirm that only `DCO compliance` from
-integration `15368` is present. If that state changed, stop and classify it
+Immediately before the write, repeat the effective-configuration verification
+at the actual resolving revisions and confirm that only `DCO compliance` from
+integration `15368` is present. If either state changed, stop and classify it
 again under the entry rules above.
 
 Replace only `DCO compliance` with integration ID `15368` by `DCO` with
@@ -233,15 +260,20 @@ request.
 - An upstream fixture regression or unexpected real bot-only, signed-human, or
   mixed result: stop; do not compensate with a custom checker or manual
   approval.
-- A relevant head, configuration, installation, registration, or rule change:
+- A target or owner configuration repository's default-branch revision, path
+  response, or access-context change invalidates its effective-configuration
+  receipt. Repeat both path readbacks at the actual resolving revisions. If the
+  effective policy changes or the defaults cannot be requalified, invalidate
+  its dependent hosted evidence too.
+- Any other relevant head, installation, registration, or rule change:
   invalidate only the dependent evidence and repeat it on the new state.
 - No installation or settings authority, a pending approval-review gate,
   blocked supported UI access, or a protection mismatch: leave installation
   and protection unchanged and return the exact blocker. Separately authorized
   source preparation or publication may continue.
-- An already-correct installation, selection, configuration, or required-check
-  pair is a documented no-op only after verifying the complete desired state.
-  Preserve it without mutation.
+- An already-correct installation, selection, effective configuration, or
+  required-check pair is a documented no-op only after verifying the complete
+  desired state. Preserve it without mutation.
 
 If an authorized manual exception is necessary, record the actor, reason,
 check-run URL, and head SHA. The resulting success proves only manual approval.
@@ -255,7 +287,10 @@ Close the owning issue only with reviewable, secret-free receipts for:
 - public app registration ID, permissions, and events;
 - exact selected repositories and approved installation permissions from a
   supported readback;
-- absence of `.github/dco.yml` on the tested base;
+- conclusive `.github/dco.yml` absence at the target repository's actual
+  resolving revision, and either the same readback at the owner configuration
+  repository's actual resolving revision or conclusive metadata that no owner
+  revision exists;
 - one current-head missing-signoff human failure from app ID `1861` for each
   affected repository, under the separately reviewed fixture protocol;
 - current-head ordinary automated-success checks for the real bot-only pull
@@ -268,11 +303,30 @@ Close the owning issue only with reviewable, secret-free receipts for:
 
 ## Scoped rollback
 
-Rollback only `nisavid/sacrysty`. Restore the pinned local DCO workflow and
-checker first, coordinate restoration of its executable-file policy entry, and
-observe a passing `DCO compliance` check from integration `15368` on the
-current head. Replace only the DCO required-check pair, read back the complete
-rule, and confirm every unrelated control remains identical. Then remove only
-`nisavid/sacrysty` from the app's selected repositories if this migration added
-it. Never remove other repositories or the whole installation as a shortcut.
-Record the corresponding registration, selection, check, and settings receipts.
+Rollback only `nisavid/sacrysty`. First repeat both effective-configuration path
+readbacks at their actual resolving revisions; an unexpected configured or
+inherited policy, inaccessible path, or ambiguous response requires scope and
+qualification adjudication before rollback action.
+
+Prepare one reviewed rollback source candidate that restores the pinned local
+DCO workflow and checker and its executable-file policy entry, and makes every
+current contribution and enforcement claim agree with that legacy behavior.
+Update `CONTRIBUTING.md`, the status and compatibility sections of
+`docs/adr/0003-maintained-dco-github-app.md`, and this procedure in place where
+affected. The restored guidance must describe the legacy checker's exact,
+case-sensitive author name-and-email pair and its check of Bot-associated
+non-merge commits, rather than leaving the app's matching, Bot exemption,
+remediation, or manual-approval behavior as current. Preserve this single
+discoverable procedure path and the historical receipts; do not delete the
+procedure or rewrite old evidence.
+
+Observe a passing `DCO compliance` check from integration `15368` on that
+complete candidate's current head before switching rules. Replace only `DCO`
+from integration `1861` with `DCO compliance` from integration `15368`, read
+back the complete rule, and require that pair to be the only semantic change.
+Land that exact reviewed candidate, repeating the configuration readbacks if a
+resolving revision changed. Then remove only `nisavid/sacrysty` from the app's
+selected repositories if this migration added it. Never remove other
+repositories or the whole installation as a shortcut. Record the corresponding
+source, effective-configuration, registration, selection, check, and settings
+receipts.

@@ -36,10 +36,14 @@ Use the maintained hosted DCO GitHub App with app ID `1861` and its defaults:
 - someone with repository write access may manually approve a failed check as
   an explicit exception.
 
-Do not add `.github/dco.yml` while these defaults are intended. The protected
-branch requires a current applicable `DCO` check from app ID `1861`, while
-preserving every unrelated rule and required check. Follow
-`docs/agents/dco-provisioning.md` when verifying or changing this enforcement.
+Use these defaults only when reviewable readbacks at the actual default-branch
+revisions Probot resolves show that neither this repository's `.github/dco.yml`
+nor `nisavid/.github`'s `.github/dco.yml` supplies configured or inherited
+policy. A file or `_extends` chain is a scope and qualification question, not
+authorization to change owner configuration. The protected branch requires a
+current applicable `DCO` check from app ID `1861`, while preserving every
+unrelated rule and required check. Follow `docs/agents/dco-provisioning.md` when
+verifying or changing this enforcement.
 
 After the DCO migration lands, retain the Dependabot pull request and its bot
 commit. Refresh it without rewriting the bot commit, then put the Cocogitto
@@ -98,17 +102,23 @@ plus a signed human commit succeeds. Keep the fixture receipts and completion
 state in the owning issue.
 
 Repository-source validation checks the local workflow and checker removal,
-absence of a DCO configuration override, documentation consistency, and
-preservation of unrelated workflow pins.
+documentation consistency, and preservation of unrelated workflow pins. It
+does not alone establish effective configuration. That requires reviewable
+readbacks of this repository's and the owner configuration repository's
+`.github/dco.yml` paths at the actual default-branch revisions Probot resolves,
+or conclusive repository metadata when no owner revision exists. Inaccessible
+or ambiguous responses and any configured or inherited policy stop
+qualification under the accepted defaults.
 
 Hosted integration evidence is narrower and tied to controlled pull requests.
 It requires current-head `DCO` checks from app ID `1861` for a bot-only pull
 request and the signed-human migration pull request before the switch, one
 missing-signoff human failure before switching each affected repository, and
 the retained mixed bot/signed-human pull request afterward. It also requires a
-supported recheck response, exact selected-repository and installed-permission
-readback, and complete protection readback. Other negative and parser cases do
-not need duplicate hosted pull requests.
+supported recheck response, both effective-configuration path readbacks, exact
+selected-repository and installed-permission readback, and complete protection
+readback. Other negative and parser cases do not need duplicate hosted pull
+requests.
 
 Every positive qualification, recheck, already-correct no-op, and pre-merge
 conformance receipt must retain the check output and show the ordinary automated
@@ -142,10 +152,21 @@ provider, host, ceremony, custody, or production authority.
 
 ## Rollback
 
-Rollback is scoped to this repository. First restore the pinned local workflow
-and checker and observe `DCO compliance` from integration `15368` on the current
-head. Then restore only that required-check entry, read back the complete rule,
-and remove this repository from the hosted app selection only if the migration
-added it. Preserve other selected repositories, installations, required
-checks, and protection controls. Do not remove the hosted gate before its local
-replacement is live.
+Rollback is scoped to this repository. First retain both effective-configuration
+path readbacks at their actual resolving revisions. Then prepare one reviewed
+source candidate that restores the pinned local workflow, checker, and
+executable-file policy entry and makes all current contribution and enforcement
+claims truthful for the restored legacy behavior. In particular, update
+`CONTRIBUTING.md`, this ADR's status and compatibility sections, and
+`docs/agents/dco-provisioning.md` in place to distinguish the legacy checker's
+exact, case-sensitive author-pair matching and checks on Bot-associated
+non-merge commits from the hosted app's behavior. Preserve the procedure's
+single discoverable path and historical receipts.
+
+Observe `DCO compliance` from integration `15368` on that complete candidate's
+current head before replacing only `DCO` from integration `1861` with the
+legacy pair. Read back the complete rule and require that pair to be the only
+semantic change. Preserve other selected repositories, installations, required
+checks, and protection controls. Remove this repository from the hosted app
+selection only if the migration added it, and only after the local replacement
+is live.
