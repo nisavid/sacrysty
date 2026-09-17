@@ -16,7 +16,7 @@ import unittest
 from test_support import external_temporary_directory
 
 CHECKER_PATH = pathlib.Path(__file__).with_name("check-domain-model.py")
-STRICT_JSON_HELPER = pathlib.Path(__file__).with_name("strict_json.py")
+RUNTIME_SUPPORT = CHECKER_PATH.parents[1] / "sacrysty_runtime"
 SPEC = importlib.util.spec_from_file_location("check_domain_model", CHECKER_PATH)
 if SPEC is None or SPEC.loader is None:
     raise RuntimeError("unable to load domain-model checker")
@@ -288,7 +288,7 @@ class PublicRecordEnvelopeAdmissionTests(unittest.TestCase):
             (fixture_root / "conformance").mkdir()
             (fixture_root / "contracts/schemas").mkdir(parents=True)
             shutil.copy2(CHECKER_PATH, fixture_root / "conformance")
-            shutil.copy2(STRICT_JSON_HELPER, fixture_root / "conformance")
+            shutil.copytree(RUNTIME_SUPPORT, fixture_root / "sacrysty_runtime")
             shutil.copytree(repository / "fixtures", fixture_root / "fixtures")
             shutil.copy2(
                 repository / "contracts/schemas/public-record-envelope-v1.schema.json",

@@ -16,7 +16,7 @@ from test_support import external_temporary_directory
 
 ROOT = pathlib.Path(__file__).parents[1]
 CHECKER = ROOT / "conformance/check-source-inventory.py"
-STRICT_JSON_HELPER = ROOT / "conformance/strict_json.py"
+RUNTIME_SUPPORT = ROOT / "sacrysty_runtime"
 INVENTORY = ROOT / "docs/provenance/genesis-source-inventory.json"
 
 
@@ -46,7 +46,7 @@ class SourceInventoryTests(unittest.TestCase):
         command.extend([str(ROOT), str(destination)])
         subprocess.run(command, check=True)
         shutil.copy2(CHECKER, destination / "conformance")
-        shutil.copy2(STRICT_JSON_HELPER, destination / "conformance")
+        shutil.copytree(RUNTIME_SUPPORT, destination / "sacrysty_runtime")
         return destination
 
     def test_checked_in_inventory_matches_full_git_object_history(self) -> None:

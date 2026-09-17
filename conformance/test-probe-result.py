@@ -160,6 +160,23 @@ class ProbeResultTests(unittest.TestCase):
         result = self.check_json("signing-profile", source_mismatch)
         self.assertNotEqual(result.returncode, 0)
 
+    def test_only_normal_verifier_rejections_are_admitted(self) -> None:
+        for exit_status in (1, 7, 123):
+            with self.subTest(exit_status=exit_status):
+                value = signing_result()
+                for diagnostic in value["diagnostics"].values():  # type: ignore[union-attr]
+                    diagnostic["exit_status"] = exit_status  # type: ignore[index]
+                checked = self.check_json("signing-profile", value)
+                self.assertEqual(checked.returncode, 0, checked.stderr)
+
+        for exit_status in (False, -15, 0, 124, 125, 137):
+            with self.subTest(exit_status=exit_status):
+                value = signing_result()
+                for diagnostic in value["diagnostics"].values():  # type: ignore[union-attr]
+                    diagnostic["exit_status"] = exit_status  # type: ignore[index]
+                checked = self.check_json("signing-profile", value)
+                self.assertNotEqual(checked.returncode, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

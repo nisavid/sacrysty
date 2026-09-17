@@ -23,11 +23,28 @@ for the candidate. The owning issue controls acceptance of the complete genesis.
 ## Check the candidate
 
 Run from a clean checkout of the candidate commit. Keep outputs outside the
-checkout so they cannot become untracked inputs to the next check. Set `TMPDIR`
-to an existing external directory before invoking the procedure.
+checkout so they cannot become untracked inputs to the next check. Create one
+private, disposable validation root outside the checkout and start conformance
+with an explicit value-free environment. Replace the two tool paths and the
+external root below with the selected public tools and storage; do not forward
+the caller's remaining environment.
 
 ```sh
-./scripts/check-conformance.sh
+mkdir -p ../sacrysty-validation/home ../sacrysty-validation/tmp \
+  ../sacrysty-validation/xdg-config ../sacrysty-validation/gnupg
+chmod 700 ../sacrysty-validation/home ../sacrysty-validation/tmp \
+  ../sacrysty-validation/xdg-config ../sacrysty-validation/gnupg
+env -i \
+  PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin \
+  HOME="$PWD/../sacrysty-validation/home" \
+  TMPDIR="$PWD/../sacrysty-validation/tmp" \
+  XDG_CONFIG_HOME="$PWD/../sacrysty-validation/xdg-config" \
+  GNUPGHOME="$PWD/../sacrysty-validation/gnupg" \
+  GIT_CONFIG_GLOBAL="$PWD/../sacrysty-validation/missing-global-gitconfig" \
+  GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 \
+  LANG=C LC_ALL=C PYTHONDONTWRITEBYTECODE=1 \
+  SQ=/absolute/path/to/selected/sq SQV=/absolute/path/to/selected/sqv \
+  ./scripts/check-conformance.sh
 cargo fmt --all -- --check
 cargo clippy --frozen --all-targets --all-features -- -D warnings
 cargo build --frozen --all-targets --all-features
@@ -50,14 +67,22 @@ buildability and contains no behavioral tests.
 Each selected `sq` or `sqv` process is limited to 120 seconds, 1 MiB on each
 captured output stream, and 16 MiB per regular file. The aggregate limits each
 complete probe runner to 900 seconds and 1 MiB on stdout and stderr. It
-terminates ordinary same-process-group descendants before returning. These
-bounds fail closed on timeout, overflow, or cleanup failure; they are not a
-sandbox for a process that deliberately escapes its group.
+terminates ordinary same-process-group descendants before returning. The inner
+helper proves selected-group absence, the runner consumes that receipt before
+deleting disposable material, and the outer helper proves runner-group absence
+and consumes the runner receipt before result storage may be removed. Missing
+evidence retains the affected result directory and fails. These bounds fail
+closed on timeout, overflow, live descendants, persistent denial, or cleanup
+failure; they are not a sandbox for a process that deliberately escapes its
+group or a recovery mechanism for uncatchable parent death.
 
-Bind tool observations to the exact source commit, runtime versions,
-executable/dependency identities, fixture bytes, and measured results. The
-aggregate first requires a zero runner status, then parses each result, checks
-its schema and mandatory booleans, and requires the tested commit. Record
+The runner result contains self-reported tool versions, not executable,
+platform, or dependency identity. Bind those identities in a separate
+validation or qualification receipt alongside the exact source commit, fixture
+bytes, runtime versions, and measured results. The aggregate first requires a
+zero runner status, then parses each result, checks its schema and mandatory
+booleans, and requires the tested commit. Signing diagnostics count as normal
+verifier rejection only for integer statuses 1 through 123. Record
 `unsupported`, `probe-failed`, `round-trip-failed`, or unrun directly; only an
 explicit recognized capability rejection is `unsupported`, and none becomes a
 positive capability claim.

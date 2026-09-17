@@ -13,6 +13,10 @@ SQ_EVIDENCE_SQ_COMMON=(
 SQ_EVIDENCE_PROCESS_HELPER=$(
   CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P
 )/sq_evidence_process.py
+SQ_EVIDENCE_PROCESS_CLEANUP_RECEIPT='io.nisavid.sacrysty.process-cleanup/v1'
+SQ_EVIDENCE_RUNNER_CLEANUP_RECEIPT='io.nisavid.sacrysty.runner-cleanup/v1'
+SQ_EVIDENCE_ACTIVE_PROCESS_RECEIPT=
+SQ_EVIDENCE_INNER_CLEANUP_WAIT_SECONDS=2.75
 
 sq_evidence_require_tools() {
   command -v "$1" >/dev/null
@@ -41,9 +45,18 @@ sq_evidence_run_process() {
   local status_path=$2
   local stdout_path=$3
   local stderr_path=$4
+  local cleanup_receipt="${status_path}.cleanup"
+  local helper_status=0
   shift 4
+  SQ_EVIDENCE_ACTIVE_PROCESS_RECEIPT=$cleanup_receipt
   python3 -B "$SQ_EVIDENCE_PROCESS_HELPER" \
-    "$mode" "$status_path" "$stdout_path" "$stderr_path" -- "$@"
+    "$mode" "$status_path" "$stdout_path" "$stderr_path" -- "$@" ||
+    helper_status=$?
+  if [[ -n $SQ_EVIDENCE_ACTIVE_PROCESS_RECEIPT ]]; then
+    sq_evidence_consume_process_cleanup_receipt "$cleanup_receipt" || return 1
+    SQ_EVIDENCE_ACTIVE_PROCESS_RECEIPT=
+  fi
+  return "$helper_status"
 }
 
 sq_evidence_run_tool() {
@@ -52,6 +65,205 @@ sq_evidence_run_tool() {
 
 sq_evidence_run_probe() {
   sq_evidence_run_process probe "$@"
+}
+
+sq_evidence_consume_process_cleanup_receipt() {
+  local path=$1
+  if [[ ! -r $path ]]; then
+    printf 'selected process cleanup receipt is unavailable\n' >&2
+    return 1
+  fi
+  if ! python3 -B - "$path" "$SQ_EVIDENCE_PROCESS_CLEANUP_RECEIPT" <<'PY'
+import pathlib
+import sys
+
+path, expected = sys.argv[1:]
+try:
+    matches = pathlib.Path(path).read_bytes() == f"{expected}\n".encode("ascii")
+except OSError:
+    matches = False
+raise SystemExit(0 if matches else 1)
+PY
+  then
+    printf 'selected process cleanup receipt is invalid\n' >&2
+    return 1
+  fi
+  if ! rm -- "$path"; then
+    printf 'selected process cleanup failed: receipt removal\n' >&2
+    return 1
+  fi
+}
+
+sq_evidence_confirm_active_process_cleanup() {
+  if [[ -z $SQ_EVIDENCE_ACTIVE_PROCESS_RECEIPT ]]; then
+    return
+  fi
+  sq_evidence_consume_process_cleanup_receipt \
+    "$SQ_EVIDENCE_ACTIVE_PROCESS_RECEIPT" || return 1
+  SQ_EVIDENCE_ACTIVE_PROCESS_RECEIPT=
+}
+
+sq_evidence_await_active_process_cleanup() {
+  if [[ -z $SQ_EVIDENCE_ACTIVE_PROCESS_RECEIPT ]]; then
+    return
+  fi
+  if ! python3 -B - \
+    "$SQ_EVIDENCE_ACTIVE_PROCESS_RECEIPT" \
+    "$SQ_EVIDENCE_PROCESS_CLEANUP_RECEIPT" \
+    "$SQ_EVIDENCE_INNER_CLEANUP_WAIT_SECONDS" <<'PY'
+import pathlib
+import sys
+import time
+
+path = pathlib.Path(sys.argv[1])
+expected = f"{sys.argv[2]}\n".encode("ascii")
+deadline = time.monotonic() + float(sys.argv[3])
+while True:
+    try:
+        content = path.read_bytes()
+    except FileNotFoundError:
+        content = b""
+    except OSError:
+        raise SystemExit(1)
+    if content == expected:
+        raise SystemExit(0)
+    if content and not expected.startswith(content):
+        raise SystemExit(1)
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise SystemExit(1)
+    time.sleep(min(0.01, remaining))
+PY
+  then
+    printf 'selected process cleanup receipt is unavailable\n' >&2
+    return 1
+  fi
+  sq_evidence_confirm_active_process_cleanup
+}
+
+sq_evidence_interrupt_runner() {
+  if ! sq_evidence_await_active_process_cleanup; then
+    exit 1
+  fi
+  exit 143
+}
+
+sq_evidence_write_runner_cleanup_receipt() {
+  local receipt=${SACRYSTY_RUNNER_CLEANUP_RECEIPT:-}
+  local expected_parent
+  local receipt_parent
+  if [[ -z $receipt ]]; then
+    return
+  fi
+  if [[ -e $receipt || -z ${TMPDIR:-} ]]; then
+    printf 'runner cleanup receipt path is invalid\n' >&2
+    return 1
+  fi
+  expected_parent=$(CDPATH='' cd -- "$TMPDIR/../.." && pwd -P) || return 1
+  receipt_parent=$(CDPATH='' cd -- "$(dirname -- "$receipt")" && pwd -P) || return 1
+  if [[ $receipt_parent != "$expected_parent" ]]; then
+    printf 'runner cleanup receipt path is invalid\n' >&2
+    return 1
+  fi
+  (umask 077 && printf '%s\n' "$SQ_EVIDENCE_RUNNER_CLEANUP_RECEIPT" >"$receipt")
+}
+
+sq_evidence_finish_runner_cleanup() {
+  local path=$1
+  local label=$2
+  sq_evidence_confirm_active_process_cleanup || return 1
+  sq_evidence_remove_and_verify "$path" "$label" || return 1
+  sq_evidence_write_runner_cleanup_receipt
+}
+
+sq_evidence_result_paths() {
+  local stem=$1
+  SQ_EVIDENCE_STATUS_PATH="${stem}.status"
+  SQ_EVIDENCE_STDOUT_PATH="${stem}.stdout"
+  SQ_EVIDENCE_STDERR_PATH="${stem}.stderr"
+}
+
+sq_evidence_require_success_at_stem() {
+  local label=$1
+  local stem=$2
+  shift 2
+  sq_evidence_result_paths "$stem"
+  sq_evidence_require_tool_success \
+    "$label" "$SQ_EVIDENCE_STATUS_PATH" "$SQ_EVIDENCE_STDOUT_PATH" \
+    "$SQ_EVIDENCE_STDERR_PATH" "$@"
+}
+
+sq_evidence_require_rejection_at_stem() {
+  local label=$1
+  local stem=$2
+  shift 2
+  sq_evidence_result_paths "$stem"
+  sq_evidence_require_tool_rejection \
+    "$label" "$SQ_EVIDENCE_STATUS_PATH" "$SQ_EVIDENCE_STDOUT_PATH" \
+    "$SQ_EVIDENCE_STDERR_PATH" "$@"
+}
+
+sq_evidence_classical_round_trip() {
+  local work=$1
+  local message=$2
+  local sq_bin=$3
+  local sqv_bin=$4
+  SQ_EVIDENCE_KEY="$work/classical-key.pgp"
+  SQ_EVIDENCE_CERTIFICATE="$work/classical-cert.pgp"
+  SQ_EVIDENCE_SIGNATURE="$work/message.sig"
+  SQ_EVIDENCE_TAMPERED_MESSAGE="$work/tampered-message.bin"
+  SQ_EVIDENCE_TAMPERED_SIGNATURE="$work/tampered-signature.sig"
+  SQ_EVIDENCE_OTHER_KEY="$work/other-key.pgp"
+  SQ_EVIDENCE_OTHER_CERTIFICATE="$work/other-cert.pgp"
+
+  sq_evidence_require_success_at_stem \
+    'classical key generation' "$work/generate" \
+    "$sq_bin" "${SQ_EVIDENCE_SQ_COMMON[@]}" --time 20260910 key generate \
+    --own-key --userid 'Sacrysty Fixture <fixture@example.invalid>' \
+    --profile rfc9580 --cipher-suite cv25519 --without-password \
+    --output "$SQ_EVIDENCE_KEY" --rev-cert "$work/revocation.pgp"
+  sq_evidence_require_success_at_stem \
+    'classical certificate extraction' "$work/extract" \
+    "$sq_bin" "${SQ_EVIDENCE_SQ_COMMON[@]}" key delete \
+    --cert-file "$SQ_EVIDENCE_KEY" --output "$SQ_EVIDENCE_CERTIFICATE"
+  sq_evidence_require_success_at_stem \
+    'classical detached signing' "$work/sign" \
+    "$sq_bin" "${SQ_EVIDENCE_SQ_COMMON[@]}" --time 20260910 sign \
+    --signer-file "$SQ_EVIDENCE_KEY" --signature-file "$SQ_EVIDENCE_SIGNATURE" \
+    --binary "$message"
+  sq_evidence_require_success_at_stem \
+    'classical independent verification' "$work/verify" \
+    "$sqv_bin" --time 20260910 --keyring "$SQ_EVIDENCE_CERTIFICATE" \
+    --signature-file "$SQ_EVIDENCE_SIGNATURE" "$message"
+
+  cp "$message" "$SQ_EVIDENCE_TAMPERED_MESSAGE"
+  printf 'tamper\n' >>"$SQ_EVIDENCE_TAMPERED_MESSAGE"
+  sq_evidence_require_rejection_at_stem \
+    'tampered-message verification' "$work/tampered-message" \
+    "$sqv_bin" --time 20260910 --keyring "$SQ_EVIDENCE_CERTIFICATE" \
+    --signature-file "$SQ_EVIDENCE_SIGNATURE" "$SQ_EVIDENCE_TAMPERED_MESSAGE"
+
+  cp "$SQ_EVIDENCE_SIGNATURE" "$SQ_EVIDENCE_TAMPERED_SIGNATURE"
+  printf 'tamper\n' >>"$SQ_EVIDENCE_TAMPERED_SIGNATURE"
+  sq_evidence_require_rejection_at_stem \
+    'tampered-signature verification' "$work/tampered-signature" \
+    "$sqv_bin" --time 20260910 --keyring "$SQ_EVIDENCE_CERTIFICATE" \
+    --signature-file "$SQ_EVIDENCE_TAMPERED_SIGNATURE" "$message"
+
+  sq_evidence_require_success_at_stem \
+    'wrong-certificate key generation' "$work/other-generate" \
+    "$sq_bin" "${SQ_EVIDENCE_SQ_COMMON[@]}" --time 20260910 key generate \
+    --own-key --userid 'Sacrysty Other Fixture <other@example.invalid>' \
+    --profile rfc9580 --cipher-suite cv25519 --without-password \
+    --output "$SQ_EVIDENCE_OTHER_KEY" --rev-cert "$work/other-revocation.pgp"
+  sq_evidence_require_success_at_stem \
+    'wrong-certificate extraction' "$work/other-extract" \
+    "$sq_bin" "${SQ_EVIDENCE_SQ_COMMON[@]}" key delete \
+    --cert-file "$SQ_EVIDENCE_OTHER_KEY" --output "$SQ_EVIDENCE_OTHER_CERTIFICATE"
+  sq_evidence_require_rejection_at_stem \
+    'wrong-certificate verification' "$work/wrong-certificate" \
+    "$sqv_bin" --time 20260910 --keyring "$SQ_EVIDENCE_OTHER_CERTIFICATE" \
+    --signature-file "$SQ_EVIDENCE_SIGNATURE" "$message"
 }
 
 sq_evidence_read_status() {

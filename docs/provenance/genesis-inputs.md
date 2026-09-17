@@ -42,6 +42,25 @@ invocation, and [consumer procedure](../agents/genesis-validation.md) exercise
 the assembled tree. They establish no additional product interface or
 operational authority.
 
+## Direct FIDO source closure
+
+The earlier five-input provisional qualification tuple is superseded because
+the adapter and its runtime closure changed. The complete repository-local
+source closure for a renewed direct synthetic FIDO check is:
+
+- `adapters/fido-custody-v1.md`—the consumed contract;
+- `adapters/fido_custody.py`—the reference adapter;
+- `conformance/check-fido-custody.py`—the direct checker;
+- `conformance/test_support.py`—the checker's external-storage guard;
+- `sacrysty_runtime/__init__.py`—the internal package initializer;
+- `sacrysty_runtime/process_groups.py`—the shared owned-group lifecycle; and
+- `sacrysty_runtime/strict_json.py`—the shared response decoder.
+
+There are no `adapters` or `conformance` package initializer files in this
+tree. A downstream qualification must bind every path above, its integrated
+commit and runtime, and the qualification owner's runner, workflow, and tests.
+This receipt does not rebind that qualification or its hosted evidence.
+
 ## Controlling public decisions
 
 The source follows the ownership and compatibility boundary in

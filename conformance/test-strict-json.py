@@ -3,13 +3,20 @@
 
 from __future__ import annotations
 
+import decimal
+import pathlib
+import sys
 import unittest
 
-from strict_json import (
+ROOT = pathlib.Path(__file__).parents[1]
+sys.path.insert(0, str(ROOT))
+
+from sacrysty_runtime.strict_json import (
     DuplicateMemberError,
     InvalidJsonSyntaxError,
     InvalidUtf8Error,
     NonFiniteNumberError,
+    UnrepresentableNumberError,
     decode_strict_json,
 )
 
@@ -33,6 +40,14 @@ class StrictJsonTests(unittest.TestCase):
             decode_strict_json(b'{"body":{"text":"line one\\nline two\\n"}}'),
             {"body": {"text": "line one\nline two\n"}},
         )
+
+    def test_finite_decimals_are_preserved_or_rejected_explicitly(self) -> None:
+        decoded = decode_strict_json(b'{"value":1e400}')
+        self.assertEqual(decoded, {"value": decimal.Decimal("1e400")})
+        self.assertIsInstance(decoded["value"], decimal.Decimal)
+
+        with self.assertRaises(UnrepresentableNumberError):
+            decode_strict_json(b'{"value":1e9999999999999999999999999}')
 
 
 if __name__ == "__main__":

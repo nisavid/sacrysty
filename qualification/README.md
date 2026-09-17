@@ -2,7 +2,9 @@
 
 This directory records the qualification boundary for public, value-free tool
 evidence. A result from `conformance/run-sq.sh` is a runtime observation bound
-to one source revision, fixture digest, and tool build; it is not a production
+to one source revision and fixture digest, with self-reported `sq` and `sqv`
+version text. Exact executable, platform, and dependency identity requires a
+separate validation or qualification receipt. Neither artifact is a production
 or adopter qualification.
 
 A record must bind its claim to immutable inputs and state its limitations and

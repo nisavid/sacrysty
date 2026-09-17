@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import errno
 import os
 import pathlib
 import selectors
@@ -16,9 +15,24 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import BinaryIO
 
+ROOT = pathlib.Path(__file__).parents[1]
+sys.path.insert(0, str(ROOT))
+
+from sacrysty_runtime.process_groups import (
+    ProcessGroupError,
+    ProcessGroupOwnershipLost,
+    SignalStep,
+    leader_exited_unreaped,
+    terminate_and_reap,
+)
+
 STREAM_LIMIT_BYTES = 1024 * 1024
 FILE_LIMIT_BYTES = 16 * 1024 * 1024
 KILL_GRACE_SECONDS = 1.0
+INNER_CLEANUP_SECONDS = 0.25 + 2 * KILL_GRACE_SECONDS
+OUTER_COOPERATIVE_MARGIN_SECONDS = 1.0
+PROCESS_CLEANUP_RECEIPT = b"io.nisavid.sacrysty.process-cleanup/v1\n"
+RUNNER_CLEANUP_RECEIPT = b"io.nisavid.sacrysty.runner-cleanup/v1\n"
 
 
 @dataclass(frozen=True)
@@ -37,6 +51,47 @@ class ProcessOutputPaths:
         return self.status, self.stdout, self.stderr
 
 
+@dataclass(frozen=True)
+class CleanupReceipt:
+    """Private same-run proof that an owned selected group is absent."""
+
+    path: pathlib.Path
+
+    @classmethod
+    def for_status(cls, status_path: pathlib.Path) -> CleanupReceipt:
+        return cls(pathlib.Path(f"{status_path}.cleanup"))
+
+    def write(self) -> None:
+        try:
+            with self.path.open("xb") as stream:
+                stream.write(PROCESS_CLEANUP_RECEIPT)
+        except OSError as exc:
+            raise ProcessBoundaryError(
+                "process cleanup receipt cannot be written"
+            ) from exc
+
+    def consume(self) -> None:
+        try:
+            content = self.path.read_bytes()
+            if content != PROCESS_CLEANUP_RECEIPT:
+                raise ProcessBoundaryError("process cleanup receipt is invalid")
+            self.path.unlink()
+        except ProcessBoundaryError:
+            raise
+        except OSError as exc:
+            raise ProcessBoundaryError(
+                "process cleanup receipt is unavailable"
+            ) from exc
+
+
+def _runner_receipt_path(status_path: pathlib.Path) -> pathlib.Path:
+    return pathlib.Path(f"{status_path}.runner-cleanup")
+
+
+def _cancellation_marker_path(status_path: pathlib.Path) -> pathlib.Path:
+    return pathlib.Path(f"{status_path}.cancel")
+
+
 PROCESS_LIMITS = {
     "tool": ProcessLimits(timeout_seconds=120.0, terminate_grace_seconds=0.25),
     # A probe runner can be waiting on one tool helper whose selected process
@@ -44,7 +99,9 @@ PROCESS_LIMITS = {
     # and exit before escalating against the runner group.
     "probe": ProcessLimits(
         timeout_seconds=900.0,
-        terminate_grace_seconds=0.25 + 2 * KILL_GRACE_SECONDS,
+        terminate_grace_seconds=(
+            INNER_CLEANUP_SECONDS + OUTER_COOPERATIVE_MARGIN_SECONDS
+        ),
     ),
 }
 _LIMIT_AND_EXEC = r"""
@@ -76,170 +133,32 @@ class _ProcessOwnershipLost(ProcessBoundaryError):
     """The selected leader was reaped outside this process boundary."""
 
 
-def _errno_name(error: OSError) -> str:
-    if error.errno is None:
-        return "unknown errno"
-    return errno.errorcode.get(error.errno, f"errno {error.errno}")
-
-
-def _group_exists(process_group: int) -> bool:
-    try:
-        os.killpg(process_group, 0)
-    except ProcessLookupError:
-        return False
-    except OSError as exc:
-        raise ProcessBoundaryError(
-            f"process-group cleanup check failed ({_errno_name(exc)})"
-        ) from exc
-    return True
-
-
-def _is_permission_denial(error: ProcessBoundaryError) -> bool:
-    cause = error.__cause__
-    return isinstance(cause, OSError) and cause.errno == errno.EPERM
-
-
-def _signal_group(process_group: int, selected_signal: signal.Signals) -> bool:
-    try:
-        os.killpg(process_group, selected_signal)
-    except ProcessLookupError:
-        return False
-    except OSError as exc:
-        if exc.errno == errno.ESRCH:
-            return False
-        raise ProcessBoundaryError(
-            f"process-group cleanup signal failed ({_errno_name(exc)})"
-        ) from exc
-    return True
-
-
-def _wait_for_group_exit(process_group: int, seconds: float) -> bool:
-    deadline = time.monotonic() + seconds
-    last_permission_denial: ProcessBoundaryError | None = None
-    while True:
-        try:
-            group_exists = _group_exists(process_group)
-        except ProcessBoundaryError as exc:
-            if not _is_permission_denial(exc):
-                raise
-            # XNU can return EPERM while an explicit process group contains
-            # only zombies. Require a later ESRCH inside this cleanup window;
-            # a denial that lasts through the deadline remains an error.
-            last_permission_denial = exc
-        else:
-            if not group_exists:
-                return True
-            last_permission_denial = None
-
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            if last_permission_denial is not None:
-                raise last_permission_denial
-            return False
-        time.sleep(min(0.01, remaining))
-
-
 def _leader_exited_unreaped(process: subprocess.Popen[bytes]) -> bool:
     try:
-        status = os.waitid(
-            os.P_PID,
-            process.pid,
-            os.WEXITED | os.WNOHANG | os.WNOWAIT,
-        )
-    except ChildProcessError as exc:
+        return leader_exited_unreaped(process)
+    except ProcessGroupOwnershipLost as exc:
         raise _ProcessOwnershipLost("process leader ownership was lost") from exc
-    except OSError as exc:
-        raise ProcessBoundaryError(
-            f"process leader status check failed ({_errno_name(exc)})"
-        ) from exc
-    return status is not None
-
-
-def _wait_for_cleanup_grace(seconds: float) -> None:
-    deadline = time.monotonic() + seconds
-    while True:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return
-        time.sleep(remaining)
-
-
-def _reap_leader_after_group_failure(
-    process: subprocess.Popen[bytes], group_cleanup_error: ProcessBoundaryError
-) -> None:
-    leader_signal_error: OSError | None = None
-    try:
-        process.kill()
-    except OSError as exc:
-        if exc.errno != errno.ESRCH:
-            leader_signal_error = exc
-    try:
-        process.wait(timeout=KILL_GRACE_SECONDS)
-    except subprocess.TimeoutExpired as exc:
-        if leader_signal_error is not None:
-            raise ProcessBoundaryError(
-                "process leader cleanup signal failed "
-                f"({_errno_name(leader_signal_error)}) after group cleanup failure"
-            ) from group_cleanup_error
-        raise ProcessBoundaryError(
-            "process leader cleanup timed out after group cleanup failure"
-        ) from exc
-    raise group_cleanup_error
-
-
-def _signal_group_or_reap_leader(
-    process: subprocess.Popen[bytes], selected_signal: signal.Signals
-) -> bool:
-    try:
-        _signal_group(process.pid, selected_signal)
-    except ProcessBoundaryError as group_cleanup_error:
-        if _is_permission_denial(group_cleanup_error) and _leader_exited_unreaped(
-            process
-        ):
-            # Reaping ends numeric group ownership. Only bounded signal-zero
-            # absence checks are permitted after this wait.
-            try:
-                process.wait(timeout=KILL_GRACE_SECONDS)
-            except subprocess.TimeoutExpired as exc:
-                raise ProcessBoundaryError(
-                    "process leader cleanup timed out after group signal denial"
-                ) from exc
-            if not _wait_for_group_exit(process.pid, KILL_GRACE_SECONDS):
-                raise ProcessBoundaryError("process-group cleanup timed out")
-            return False
-        _reap_leader_after_group_failure(process, group_cleanup_error)
-    return True
+    except ProcessGroupError as exc:
+        raise ProcessBoundaryError(str(exc)) from exc
 
 
 def _terminate_and_reap(
     process: subprocess.Popen[bytes], limits: ProcessLimits
 ) -> None:
-    leader_already_exited = _leader_exited_unreaped(process)
-    if not _signal_group_or_reap_leader(process, signal.SIGTERM):
-        return
-    if not leader_already_exited:
-        _wait_for_cleanup_grace(limits.terminate_grace_seconds)
-    if not _signal_group_or_reap_leader(process, signal.SIGKILL):
-        return
     try:
-        process.wait(timeout=KILL_GRACE_SECONDS)
-    except subprocess.TimeoutExpired:
-        try:
-            process.kill()
-        except OSError as signal_error:
-            if signal_error.errno != errno.ESRCH:
-                raise ProcessBoundaryError(
-                    "process leader cleanup signal failed "
-                    f"({_errno_name(signal_error)})"
-                ) from signal_error
-        try:
-            process.wait(timeout=KILL_GRACE_SECONDS)
-        except subprocess.TimeoutExpired as final_error:
-            raise ProcessBoundaryError(
-                "process leader cleanup timed out"
-            ) from final_error
-    if not _wait_for_group_exit(process.pid, KILL_GRACE_SECONDS):
-        raise ProcessBoundaryError("process-group cleanup timed out")
+        terminate_and_reap(
+            process,
+            (
+                SignalStep(signal.SIGTERM, limits.terminate_grace_seconds),
+                SignalStep(signal.SIGKILL),
+            ),
+            leader_wait_seconds=KILL_GRACE_SECONDS,
+            absence_wait_seconds=KILL_GRACE_SECONDS,
+        )
+    except ProcessGroupOwnershipLost as exc:
+        raise _ProcessOwnershipLost("process leader ownership was lost") from exc
+    except ProcessGroupError as exc:
+        raise ProcessBoundaryError(str(exc)) from exc
 
 
 def _normalized_status(returncode: int) -> int:
@@ -268,6 +187,76 @@ def _limits_for(mode: str) -> ProcessLimits:
         return PROCESS_LIMITS[mode]
     except KeyError as exc:
         raise ProcessBoundaryError(f"unknown sq evidence process mode: {mode}") from exc
+
+
+def _make_private_directory(path: pathlib.Path) -> None:
+    try:
+        path.mkdir(mode=0o700)
+    except OSError as exc:
+        raise ProcessBoundaryError(
+            "selected process environment cannot be created"
+        ) from exc
+
+
+def _selected_environment(
+    mode: str, output_paths: ProcessOutputPaths
+) -> dict[str, str]:
+    """Build the value-free environment for one runner or selected tool."""
+
+    path = os.environ.get("PATH")
+    if not path:
+        raise ProcessBoundaryError("selected process PATH is unavailable")
+    environment_root = output_paths.status.parent / (
+        f".{output_paths.status.name}.environment"
+    )
+    _make_private_directory(environment_root)
+    directories = {
+        "HOME": environment_root / "home",
+        "TMPDIR": environment_root / "tmp",
+        "XDG_CACHE_HOME": environment_root / "xdg-cache",
+        "XDG_CONFIG_HOME": environment_root / "xdg-config",
+        "XDG_DATA_HOME": environment_root / "xdg-data",
+        "GNUPGHOME": environment_root / "gnupg",
+    }
+    for directory in directories.values():
+        _make_private_directory(directory)
+    environment = {name: str(directory) for name, directory in directories.items()}
+    environment.update(
+        {
+            "GIT_CONFIG_GLOBAL": str(environment_root / "missing-global-gitconfig"),
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_TERMINAL_PROMPT": "0",
+            "LANG": "C",
+            "LC_ALL": "C",
+            "PATH": path,
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+    )
+    if mode == "probe":
+        for name in ("SQ", "SQV"):
+            selected = os.environ.get(name)
+            if selected:
+                environment[name] = selected
+        environment["SACRYSTY_RUNNER_CLEANUP_RECEIPT"] = str(
+            _runner_receipt_path(output_paths.status)
+        )
+    return environment
+
+
+def _consume_runner_receipt(path: pathlib.Path) -> None:
+    try:
+        content = path.read_bytes()
+        if content != RUNNER_CLEANUP_RECEIPT:
+            raise ProcessBoundaryError("runner cleanup receipt is invalid")
+        path.unlink()
+    except ProcessBoundaryError:
+        raise
+    except OSError as exc:
+        raise ProcessBoundaryError("runner cleanup receipt is unavailable") from exc
+
+
+def _cancellation_requested(mode: str, output_paths: ProcessOutputPaths) -> bool:
+    return mode == "probe" and _cancellation_marker_path(output_paths.status).exists()
 
 
 def _capture_ready_streams(
@@ -312,14 +301,18 @@ def run_process(
     if not command:
         raise ProcessBoundaryError("selected process command is empty")
     paths = output_paths.all()
+    cleanup_receipt = CleanupReceipt.for_status(output_paths.status)
+    runner_receipt = _runner_receipt_path(output_paths.status)
     if len({path.resolve() for path in paths}) != len(paths):
         raise ProcessBoundaryError("selected process output paths must be distinct")
     output_parents = {path.parent.resolve() for path in paths}
     if len(output_parents) != 1:
         raise ProcessBoundaryError("selected process outputs must share a directory")
     output_directory = output_parents.pop()
-    if any(path.exists() for path in paths):
+    reserved_paths = (*paths, cleanup_receipt.path, runner_receipt)
+    if any(path.exists() for path in reserved_paths):
         raise ProcessBoundaryError("selected process output path already exists")
+    selected_environment = _selected_environment(mode, output_paths)
 
     try:
         stdout_file = output_paths.stdout.open("xb")
@@ -340,7 +333,17 @@ def run_process(
     interruption_requested = False
     streams: dict[BinaryIO, tuple[str, BinaryIO]] = {}
     counts = {"stdout": 0, "stderr": 0}
+
+    def record_completed_cleanup() -> None:
+        if process is not None and not cleanup_complete:
+            raise ProcessBoundaryError("process cleanup was not confirmed")
+        if mode == "probe" and process is not None and process.returncode != 125:
+            _consume_runner_receipt(runner_receipt)
+        cleanup_receipt.write()
+
     try:
+        if _cancellation_requested(mode, output_paths):
+            raise ProcessInterrupted(f"{mode} process interrupted")
         previous_startup_signal_mask = signal.pthread_sigmask(
             signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM}
         )
@@ -369,6 +372,7 @@ def run_process(
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
+                    env=selected_environment,
                     start_new_session=True,
                 )
             except (OSError, subprocess.SubprocessError) as exc:
@@ -389,6 +393,8 @@ def run_process(
 
         deadline = time.monotonic() + limits.timeout_seconds
         while selector.get_map() or not cleanup_complete:
+            if _cancellation_requested(mode, output_paths):
+                raise ProcessInterrupted(f"{mode} process interrupted")
             if not cleanup_complete and _leader_exited_unreaped(process):
                 _terminate_and_reap(process, limits)
                 cleanup_complete = True
@@ -411,6 +417,7 @@ def run_process(
         child_status = _normalized_status(process.returncode)
         if child_status == 125:
             raise ProcessBoundaryError(f"{mode} process setup or execution failed")
+        record_completed_cleanup()
         try:
             with output_paths.status.open("x", encoding="ascii") as status_file:
                 status_file.write(f"{child_status}\n")
@@ -428,8 +435,11 @@ def run_process(
         ):
             try:
                 _terminate_and_reap(process, limits)
+                cleanup_complete = True
             except ProcessBoundaryError as cleanup_error:
                 raise cleanup_error from original_error
+        if process is not None and not cleanup_complete:
+            raise
         drain_deadline = time.monotonic() + KILL_GRACE_SECONDS
         while selector.get_map():
             remaining = drain_deadline - time.monotonic()
@@ -437,6 +447,10 @@ def run_process(
                 mode, selector, streams, counts, min(0.05, remaining)
             ):
                 break
+        try:
+            record_completed_cleanup()
+        except ProcessBoundaryError as cleanup_error:
+            raise cleanup_error from original_error
         raise
     finally:
         if (

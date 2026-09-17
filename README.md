@@ -52,6 +52,9 @@ personal surfaces.
 - [`src/`](src/) contains the empty library for the single primary distribution.
 - [`adapters/`](adapters/) holds interfaces and maintained reference adapters
   only after a real seam is established.
+- [`sacrysty_runtime/`](sacrysty_runtime/) contains private Python lifecycle and
+  strict-decoding support shared by existing adapters and conformance checks;
+  it is not a public product API.
 - [`profiles/`](profiles/) holds public non-secret policy profiles.
 - [`fixtures/`](fixtures/) and [`conformance/`](conformance/) hold disposable
   examples and executable contract evidence.

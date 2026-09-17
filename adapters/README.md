@@ -13,3 +13,9 @@ The [one-shot FIDO custody adapter v1](fido-custody-v1.md) is the first
 value-free reference adapter. Its dependency and artifact inputs remain
 explicitly pinned by the caller; real authenticator qualification and private
 adopter bindings stay outside this repository.
+
+The reference process boundary owns an ordinary POSIX worker session through
+reaping. Catchable `SIGINT` and normal `SIGTERM` cancellation clean that owned
+group before returning or preserving the caller's signal disposition. This is
+not recovery from `SIGKILL`, uncatchable parent death, a worker that escapes its
+session, or persistent kernel denial, and it is not a malicious-code sandbox.

@@ -2,18 +2,22 @@
 """Value-free executable evidence for the public record boundary."""
 
 import re
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 
-from strict_json import (
+ROOT = Path(__file__).parents[1]
+sys.path.insert(0, str(ROOT))
+
+from sacrysty_runtime.strict_json import (
     DuplicateMemberError,
     InvalidJsonSyntaxError,
     InvalidUtf8Error,
     NonFiniteNumberError,
+    UnrepresentableNumberError,
     decode_strict_json,
 )
 
-ROOT = Path(__file__).parents[1]
 SUPPORTED_EXTENSION_VERSION = "1.0.0"
 UNDERSTOOD_REQUIRED_EXTENSIONS: frozenset[str] = frozenset()
 
@@ -40,6 +44,10 @@ def parse_serialized_envelope(serialized: bytes) -> object:
             else "non-finite JSON number"
         )
         raise InvalidSerializedEnvelope(f"{label}: {exc.value}") from exc
+    except UnrepresentableNumberError as exc:
+        raise InvalidSerializedEnvelope(
+            f"unrepresentable finite JSON number: {exc.value}"
+        ) from exc
     except InvalidUtf8Error as exc:
         raise InvalidSerializedEnvelope("serialized envelope is not UTF-8") from exc
     except InvalidJsonSyntaxError as exc:

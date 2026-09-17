@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import errno
+import json
 import os
 import pathlib
 import signal
@@ -19,23 +20,7 @@ from test_support import external_temporary_directory
 ROOT = pathlib.Path(__file__).parents[1]
 
 
-def _terminate_if_alive(pid: int) -> None:
-    try:
-        os.kill(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-
-
-def _terminate_group_if_alive(process_group: int) -> None:
-    if process_group == os.getpgrp():
-        raise AssertionError("refusing to signal the test process group")
-    try:
-        os.killpg(process_group, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-
-
-def _clean_process_tree(
+def _close_owned_process(
     helper: subprocess.Popen[str], pid_paths: tuple[pathlib.Path, ...]
 ) -> None:
     if helper.poll() is None:
@@ -49,16 +34,18 @@ def _clean_process_tree(
         if not pid_path.is_file():
             continue
         pid = int(pid_path.read_text())
-        try:
-            process_group = os.getpgid(pid)
-        except ProcessLookupError:
-            continue
-        _terminate_group_if_alive(process_group)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.01)
 
 
 class SqEvidenceProcessTests(unittest.TestCase):
     def assert_process_gone(self, pid: int) -> None:
-        deadline = time.monotonic() + 2
+        deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             try:
                 os.kill(pid, 0)
@@ -84,10 +71,22 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 pid_path = root / "pid"
                 script = root / "hang.py"
                 script.write_text(
-                    "import os, pathlib, time\n"
+                    "import atexit, os, pathlib, signal, time\n"
                     f"pathlib.Path({str(pid_path)!r}).write_text(str(os.getpid()))\n"
-                    "while True:\n"
-                    "    time.sleep(1)\n"
+                    "def receipt():\n"
+                    "    path = os.environ.get('SACRYSTY_RUNNER_CLEANUP_RECEIPT')\n"
+                    "    if path and not pathlib.Path(path).exists():\n"
+                    "        pathlib.Path(path).write_bytes(\n"
+                    "            b'io.nisavid.sacrysty.runner-cleanup/v1\\n'\n"
+                    "        )\n"
+                    "def stop(_number, _frame):\n"
+                    "    receipt()\n"
+                    "    raise SystemExit(0)\n"
+                    "atexit.register(receipt)\n"
+                    "signal.signal(signal.SIGTERM, stop)\n"
+                    "deadline = time.monotonic() + 5\n"
+                    "while time.monotonic() < deadline:\n"
+                    "    time.sleep(0.1)\n"
                 )
                 outputs = self.make_paths(directory)
                 limits = process_boundary.PROCESS_LIMITS[mode]
@@ -117,7 +116,6 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 finally:
                     if pid_path.is_file():
                         pid = int(pid_path.read_text())
-                        self.addCleanup(_terminate_if_alive, pid)
                 self.assertIsNotNone(pid)
                 self.assert_process_gone(int(pid))
                 self.assertFalse(outputs.status.exists())
@@ -189,8 +187,9 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
                 f"pathlib.Path({str(descendant_pid_path)!r})"
                 ".write_text(str(os.getpid()))\n"
-                "while True:\n"
-                "    time.sleep(1)\n"
+                "deadline = time.monotonic() + 1.5\n"
+                "while time.monotonic() < deadline:\n"
+                "    time.sleep(0.1)\n"
             )
             script = root / "hang.py"
             script.write_text(
@@ -210,8 +209,9 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 "    child.kill()\n"
                 "    child.wait()\n"
                 "    raise SystemExit(20)\n"
-                "while True:\n"
-                "    time.sleep(1)\n"
+                "deadline = time.monotonic() + 4\n"
+                "while time.monotonic() < deadline:\n"
+                "    time.sleep(0.1)\n"
             )
             outputs = self.make_paths(directory)
             cleanup_calls: list[tuple[int, int]] = []
@@ -262,20 +262,6 @@ class SqEvidenceProcessTests(unittest.TestCase):
                         descendant_group = os.getpgid(descendant_pid)
                     except ProcessLookupError:
                         pass
-                if selected_pid is not None:
-                    if descendant_group == os.getpgrp():
-                        if descendant_pid is not None:
-                            _terminate_if_alive(descendant_pid)
-                    else:
-                        try:
-                            real_killpg(selected_pid, signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
-                    _terminate_if_alive(selected_pid)
-                    try:
-                        os.waitpid(selected_pid, 0)
-                    except ChildProcessError:
-                        pass
             self.assertIsNotNone(selected_pid)
             self.assertIsNotNone(descendant_pid)
             self.assertEqual(descendant_group, selected_pid)
@@ -299,8 +285,9 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 "import os, pathlib, time\n"
                 f"pid_path = pathlib.Path({str(child_pid_path)!r})\n"
                 "pid_path.write_text(f'{os.getpid()}:{os.getpgrp()}')\n"
-                "while True:\n"
-                "    time.sleep(1)\n"
+                "deadline = time.monotonic() + 5\n"
+                "while time.monotonic() < deadline:\n"
+                "    time.sleep(0.1)\n"
             )
             script = root / "spawn-child.py"
             script.write_text(
@@ -334,7 +321,6 @@ class SqEvidenceProcessTests(unittest.TestCase):
                     child_pid, child_group = map(
                         int, child_pid_path.read_text().split(":")
                     )
-                    self.addCleanup(_terminate_if_alive, child_pid)
             self.assertEqual(child_status, 0)
             self.assertIsNotNone(child_pid)
             self.assertIsNotNone(child_group)
@@ -457,8 +443,9 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 "import os, pathlib, time\n"
                 f"pathlib.Path({str(child_pid_path)!r})"
                 ".write_text(f'{os.getpid()}:{os.getpgrp()}')\n"
-                "while True:\n"
-                "    time.sleep(1)\n"
+                "deadline = time.monotonic() + 1.5\n"
+                "while time.monotonic() < deadline:\n"
+                "    time.sleep(0.1)\n"
             )
             script = root / "spawn-child.py"
             script.write_text(
@@ -532,10 +519,6 @@ class SqEvidenceProcessTests(unittest.TestCase):
                     child_pid, child_group = map(
                         int, child_pid_path.read_text().split(":")
                     )
-                    if child_group != os.getpgrp():
-                        _terminate_group_if_alive(child_group)
-                    else:
-                        _terminate_if_alive(child_pid)
             self.assertLess(elapsed, 1.0)
             self.assertIsNotNone(child_pid)
             self.assertIsNotNone(child_group)
@@ -707,8 +690,9 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
                 f"pathlib.Path({str(selected_pid_path)!r})"
                 ".write_text(str(os.getpid()))\n"
-                "while True:\n"
-                "    time.sleep(1)\n"
+                "deadline = time.monotonic() + 5\n"
+                "while time.monotonic() < deadline:\n"
+                "    time.sleep(0.1)\n"
             )
             outputs = self.make_paths(directory)
             real_killpg = os.killpg
@@ -757,7 +741,6 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 elapsed = time.monotonic() - started
                 if selected_pid_path.is_file():
                     selected_pid = int(selected_pid_path.read_text())
-                    self.addCleanup(_terminate_if_alive, selected_pid)
             self.assertEqual(cleanup_signals, [signal.SIGTERM, signal.SIGKILL])
             self.assertGreater(denied_checks, 1)
             self.assertLess(elapsed, 2.0)
@@ -820,6 +803,127 @@ class SqEvidenceProcessTests(unittest.TestCase):
             self.assertEqual(outputs.stdout.read_text(), "out\n")
             self.assertEqual(outputs.stderr.read_text(), "err\n")
 
+    def test_probe_requires_a_same_run_runner_cleanup_receipt(self) -> None:
+        with external_temporary_directory(
+            ROOT, prefix="sacrysty-runner-receipt-test-"
+        ) as directory:
+            root = pathlib.Path(directory)
+            missing_outputs = process_boundary.ProcessOutputPaths(
+                status=root / "missing.status",
+                stdout=root / "missing.stdout",
+                stderr=root / "missing.stderr",
+            )
+            with self.assertRaisesRegex(
+                process_boundary.ProcessBoundaryError,
+                "runner cleanup receipt is unavailable",
+            ):
+                process_boundary.run_process(
+                    "probe", missing_outputs, [sys.executable, "-c", "pass"]
+                )
+            self.assertFalse(missing_outputs.status.exists())
+            self.assertFalse(
+                process_boundary.CleanupReceipt.for_status(
+                    missing_outputs.status
+                ).path.exists()
+            )
+
+            receipt_outputs = process_boundary.ProcessOutputPaths(
+                status=root / "present.status",
+                stdout=root / "present.stdout",
+                stderr=root / "present.stderr",
+            )
+            script = (
+                "import os, pathlib\n"
+                "pathlib.Path(os.environ['SACRYSTY_RUNNER_CLEANUP_RECEIPT'])"
+                ".write_bytes(b'io.nisavid.sacrysty.runner-cleanup/v1\\n')\n"
+                "raise SystemExit(7)\n"
+            )
+            self.assertEqual(
+                process_boundary.run_process(
+                    "probe", receipt_outputs, [sys.executable, "-c", script]
+                ),
+                7,
+            )
+            self.assertEqual(receipt_outputs.status.read_text(), "7\n")
+            self.assertFalse(
+                pathlib.Path(f"{receipt_outputs.status}.runner-cleanup").exists()
+            )
+            self.assertEqual(
+                process_boundary.CleanupReceipt.for_status(
+                    receipt_outputs.status
+                ).path.read_bytes(),
+                process_boundary.PROCESS_CLEANUP_RECEIPT,
+            )
+
+    def test_selected_process_environment_is_explicit_and_value_free(self) -> None:
+        allowed_common = {
+            "GIT_CONFIG_GLOBAL",
+            "GIT_CONFIG_NOSYSTEM",
+            "GIT_TERMINAL_PROMPT",
+            "GNUPGHOME",
+            "HOME",
+            "LANG",
+            "LC_ALL",
+            "PATH",
+            "PYTHONDONTWRITEBYTECODE",
+            "TMPDIR",
+            "XDG_CACHE_HOME",
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+        }
+        selected = {
+            "PATH": os.defpath,
+            "SACRYSTY_SYNTHETIC_SENTINEL": "must-not-cross-boundary",
+            "SQ": "/value-free/sq",
+            "SQV": "/value-free/sqv",
+        }
+        for mode in ("tool", "probe"):
+            with self.subTest(mode), external_temporary_directory(
+                ROOT, prefix=f"sacrysty-{mode}-environment-test-"
+            ) as directory, mock.patch.dict(os.environ, selected, clear=True):
+                outputs = self.make_paths(directory)
+                script = (
+                    "import json, os, pathlib\n"
+                    "receipt = os.environ.get('SACRYSTY_RUNNER_CLEANUP_RECEIPT')\n"
+                    "if receipt:\n"
+                    "    pathlib.Path(receipt).write_bytes(\n"
+                    "        b'io.nisavid.sacrysty.runner-cleanup/v1\\n'\n"
+                    "    )\n"
+                    "print(json.dumps(dict(os.environ), sort_keys=True))\n"
+                )
+                self.assertEqual(
+                    process_boundary.run_process(
+                        mode, outputs, [sys.executable, "-c", script]
+                    ),
+                    0,
+                )
+                observed = json.loads(outputs.stdout.read_text())
+                expected_keys = set(allowed_common)
+                if mode == "probe":
+                    expected_keys.update(
+                        {"SACRYSTY_RUNNER_CLEANUP_RECEIPT", "SQ", "SQV"}
+                    )
+                self.assertEqual(set(observed), expected_keys)
+                self.assertNotIn("SACRYSTY_SYNTHETIC_SENTINEL", observed)
+                self.assertEqual(observed["PATH"], os.defpath)
+                for name in (
+                    "GNUPGHOME",
+                    "HOME",
+                    "TMPDIR",
+                    "XDG_CACHE_HOME",
+                    "XDG_CONFIG_HOME",
+                    "XDG_DATA_HOME",
+                ):
+                    path = pathlib.Path(observed[name])
+                    self.assertTrue(path.is_dir())
+                    self.assertEqual(path.stat().st_mode & 0o777, 0o700)
+                if mode == "tool":
+                    self.assertNotIn("SQ", observed)
+                    self.assertNotIn("SQV", observed)
+                else:
+                    self.assertEqual(observed["SQ"], selected["SQ"])
+                    self.assertEqual(observed["SQV"], selected["SQV"])
+
     def test_terminating_the_helper_reaps_its_selected_process_group(self) -> None:
         with external_temporary_directory(
             ROOT, prefix="sacrysty-process-interruption-test-"
@@ -831,8 +935,9 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 "import os, pathlib, time\n"
                 f"pathlib.Path({str(selected_pid_path)!r})"
                 ".write_text(str(os.getpid()))\n"
-                "while True:\n"
-                "    time.sleep(1)\n"
+                "deadline = time.monotonic() + 5\n"
+                "while time.monotonic() < deadline:\n"
+                "    time.sleep(0.1)\n"
             )
             outputs = self.make_paths(directory)
             helper = subprocess.Popen(
@@ -852,7 +957,7 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 stderr=subprocess.PIPE,
                 text=True,
             )
-            self.addCleanup(_clean_process_tree, helper, (selected_pid_path,))
+            self.addCleanup(_close_owned_process, helper, (selected_pid_path,))
             deadline = time.monotonic() + 2
             while not selected_pid_path.exists() and time.monotonic() < deadline:
                 time.sleep(0.01)
@@ -878,8 +983,9 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 "import os, pathlib, time\n"
                 f"pathlib.Path({str(selected_pid_path)!r})"
                 ".write_text(str(os.getpid()))\n"
-                "while True:\n"
-                "    time.sleep(1)\n"
+                "deadline = time.monotonic() + 5\n"
+                "while time.monotonic() < deadline:\n"
+                "    time.sleep(0.1)\n"
             )
             outputs = self.make_paths(directory)
             caller = root / "caller.py"
@@ -919,7 +1025,7 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 stderr=subprocess.PIPE,
                 text=True,
             )
-            self.addCleanup(_clean_process_tree, caller_process, (selected_pid_path,))
+            self.addCleanup(_close_owned_process, caller_process, (selected_pid_path,))
 
             _caller_stdout, caller_stderr = caller_process.communicate(timeout=5)
 

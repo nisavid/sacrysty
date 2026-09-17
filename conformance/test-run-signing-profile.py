@@ -12,7 +12,7 @@ import subprocess
 import unittest
 from itertools import pairwise
 
-from test_support import external_temporary_directory
+from test_support import ConstructedRepository
 
 ROOT = pathlib.Path(__file__).parents[1]
 RUNNER = ROOT / "conformance/run-signing-profile.sh"
@@ -28,7 +28,12 @@ import sys
 
 name = pathlib.Path(sys.argv[0]).name
 arguments = sys.argv[1:]
-with open(os.environ["FAKE_TOOL_LOG"], "a", encoding="utf-8") as log:
+tool_log = pathlib.Path(__TOOL_LOG__)
+control_directory = pathlib.Path(__CONTROL_DIRECTORY__)
+def control(name, default):
+    path = control_directory / name
+    return path.read_text(encoding="ascii") if path.is_file() else default
+with tool_log.open("a", encoding="utf-8") as log:
     log.write(json.dumps({"name": name, "arguments": arguments}) + "\n")
 
 controls = bytes(range(32))
@@ -36,7 +41,7 @@ if name == "sq" and arguments == ["version"]:
     sys.stdout.buffer.write(b"sq-version:" + controls + b":end")
     raise SystemExit(0)
 if name == "sqv" and arguments == ["--version"]:
-    if os.environ.get("FAKE_TOOL_FAULT") == "stderr-flood":
+    if control("fault", "none") == "stderr-flood":
         sys.stderr.buffer.write(b"x" * (2 * 1024 * 1024))
         raise SystemExit(0)
     sys.stdout.buffer.write(b"sqv-version:" + controls + b":end")
@@ -49,10 +54,12 @@ if name == "sq":
             path.write_bytes(b"disposable fake artifact\n")
     raise SystemExit(0)
 
-mode = os.environ.get("FAKE_SQV_MODE", "reject-negatives")
-is_tampered_message = arguments[-1].endswith("tampered.bin")
-is_tampered_signature = any(value.endswith("tampered.sig") for value in arguments)
-is_wrong_certificate = any(value.endswith("wrong-cert.pgp") for value in arguments)
+mode = control("sqv-mode", "reject-negatives")
+is_tampered_message = arguments[-1].endswith("tampered-message.bin")
+is_tampered_signature = any(
+    value.endswith("tampered-signature.sig") for value in arguments
+)
+is_wrong_certificate = any(value.endswith("other-cert.pgp") for value in arguments)
 negative = is_tampered_message or is_tampered_signature or is_wrong_certificate
 if not negative:
     if mode == "positive-fail":
@@ -94,7 +101,7 @@ def is_positive_independent_verification(call: dict[str, object]) -> bool:
     signature = pathlib.Path(arguments[5])
     message = pathlib.Path(arguments[6])
     return (
-        certificate.name == "signer-cert.pgp"
+        certificate.name == "classical-cert.pgp"
         and signature.name == "message.sig"
         and message.name == "message.bin"
         and certificate.parent == signature.parent == message.parent
@@ -103,82 +110,39 @@ def is_positive_independent_verification(call: dict[str, object]) -> bool:
 
 class SigningProfileRunnerTests(unittest.TestCase):
     def make_repository(self) -> tuple[pathlib.Path, dict[str, str]]:
-        temporary_directory = external_temporary_directory(
-            ROOT, prefix="sacrysty-signing-runner-test-"
+        fixture = ConstructedRepository(ROOT, prefix="sacrysty-signing-runner-test-")
+        self.addCleanup(fixture.cleanup)
+        self.constructed_repository = fixture
+        repository = fixture.repository
+        fixture.copy(RUNNER, "conformance/run-signing-profile.sh")
+        fixture.copy(SHARED_HELPER, "conformance/sq-evidence-lib.sh")
+        fixture.copy(PROCESS_HELPER, "conformance/sq_evidence_process.py")
+        fixture.copy_tree(ROOT / "sacrysty_runtime", "sacrysty_runtime")
+        fixture.write(
+            "fixtures/signing/message.bin", b"Sacrysty disposable signing fixture.\n"
         )
-        self.addCleanup(temporary_directory.cleanup)
-        test_root = pathlib.Path(temporary_directory.name)
-        repository = test_root / "repository"
-        runtime = test_root / "runtime"
-        (repository / "conformance").mkdir(parents=True)
-        (repository / "fixtures/signing").mkdir(parents=True)
-        (repository / "hooks").mkdir()
-        (runtime / "tmp").mkdir(parents=True)
-        (runtime / "home").mkdir()
-        shutil.copy2(RUNNER, repository / "conformance")
-        if SHARED_HELPER.exists():
-            shutil.copy2(SHARED_HELPER, repository / "conformance")
-        shutil.copy2(PROCESS_HELPER, repository / "conformance")
-        (repository / "fixtures/signing/message.bin").write_bytes(
-            b"Sacrysty disposable signing fixture.\n"
+        tool_log = fixture.runtime / "tool.log"
+        control_directory = fixture.runtime / "controls"
+        control_directory.mkdir()
+        fake_tool = FAKE_TOOL.replace("__TOOL_LOG__", repr(str(tool_log))).replace(
+            "__CONTROL_DIRECTORY__", repr(str(control_directory))
         )
         for name in ("sq", "sqv"):
-            write_executable(repository / "fake-bin" / name, FAKE_TOOL)
-
-        environment = {
-            "FAKE_TOOL_LOG": str(runtime / "tool.log"),
-            "GIT_CONFIG_GLOBAL": str(runtime / "missing-global-gitconfig"),
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "HOME": str(runtime / "home"),
-            "LC_ALL": "C",
-            "PATH": os.environ["PATH"],
-            "SQ": str(repository / "fake-bin/sq"),
-            "SQV": str(repository / "fake-bin/sqv"),
-            "TEST_RUNTIME": str(runtime),
-            "TMPDIR": str(runtime / "tmp"),
-            "XDG_CONFIG_HOME": str(runtime / "home/config"),
-        }
-        subprocess.run(
-            ["git", "init", "-q", str(repository)], check=True, env=environment
-        )
-        subprocess.run(
-            ["git", "-C", str(repository), "config", "user.name", "Fixture"],
-            check=True,
-            env=environment,
-        )
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repository),
-                "config",
-                "user.email",
-                "fixture@example.invalid",
-            ],
-            check=True,
-            env=environment,
-        )
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repository),
-                "config",
-                "core.hooksPath",
-                str(repository / "hooks"),
-            ],
-            check=True,
-            env=environment,
-        )
-        subprocess.run(
-            ["git", "-C", str(repository), "add", "."], check=True, env=environment
-        )
-        subprocess.run(
-            ["git", "-C", str(repository), "commit", "-q", "-m", "fixture"],
-            check=True,
-            env=environment,
+            write_executable(repository / "fake-bin" / name, fake_tool)
+        fixture.commit()
+        environment = fixture.environment
+        environment.update(
+            {
+                "FAKE_TOOL_LOG": str(tool_log),
+                "SQ": str(repository / "fake-bin/sq"),
+                "SQV": str(repository / "fake-bin/sqv"),
+            }
         )
         return repository, environment
+
+    def set_control(self, environment: dict[str, str], name: str, value: str) -> None:
+        path = pathlib.Path(environment["TEST_RUNTIME"]) / "controls" / name
+        path.write_text(value, encoding="ascii")
 
     def run_runner(
         self, repository: pathlib.Path, environment: dict[str, str]
@@ -299,7 +263,7 @@ exec "$REAL_GIT" "$@"
 
     def test_stderr_flood_fails_instead_of_becoming_probe_evidence(self) -> None:
         repository, environment = self.make_repository()
-        environment["FAKE_TOOL_FAULT"] = "stderr-flood"
+        self.set_control(environment, "fault", "stderr-flood")
 
         result = self.run_runner(repository, environment)
 
@@ -316,7 +280,7 @@ exec "$REAL_GIT" "$@"
         ):
             with self.subTest(mode):
                 repository, environment = self.make_repository()
-                environment["FAKE_SQV_MODE"] = mode
+                self.set_control(environment, "sqv-mode", mode)
 
                 result = self.run_runner(repository, environment)
 

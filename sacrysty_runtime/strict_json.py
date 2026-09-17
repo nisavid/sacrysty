@@ -1,12 +1,13 @@
-"""One strict JSON decoder for serialized conformance and adapter inputs."""
+"""Strict JSON decoding for serialized adapter and conformance inputs."""
 
 from __future__ import annotations
 
+import decimal
 import json
 
 
 class StrictJsonError(ValueError):
-    """Serialized input is not one unambiguous JSON value."""
+    """Serialized input is not one unambiguous, exactly represented JSON value."""
 
 
 class DuplicateMemberError(StrictJsonError):
@@ -19,6 +20,14 @@ class DuplicateMemberError(StrictJsonError):
 
 class NonFiniteNumberError(StrictJsonError):
     """A non-finite numeric constant is not valid JSON."""
+
+    def __init__(self, value: str) -> None:
+        super().__init__(value)
+        self.value = value
+
+
+class UnrepresentableNumberError(StrictJsonError):
+    """A finite JSON number cannot be represented without changing its value."""
 
     def __init__(self, value: str) -> None:
         super().__init__(value)
@@ -48,8 +57,18 @@ def _reject_nonstandard_constant(value: str) -> object:
     raise NonFiniteNumberError(value)
 
 
+def _exact_decimal(value: str) -> decimal.Decimal:
+    try:
+        parsed = decimal.Decimal(value)
+    except (decimal.InvalidOperation, ValueError) as exc:
+        raise UnrepresentableNumberError(value) from exc
+    if not parsed.is_finite():
+        raise NonFiniteNumberError(value)
+    return parsed
+
+
 def decode_strict_json(serialized: bytes) -> object:
-    """Decode UTF-8 JSON without duplicates or non-finite constants."""
+    """Decode UTF-8 JSON without ambiguity or numeric semantic change."""
 
     try:
         text = serialized.decode("utf-8")
@@ -60,6 +79,7 @@ def decode_strict_json(serialized: bytes) -> object:
             text,
             object_pairs_hook=_object_without_duplicate_members,
             parse_constant=_reject_nonstandard_constant,
+            parse_float=_exact_decimal,
         )
     except json.JSONDecodeError as exc:
         raise InvalidJsonSyntaxError from exc

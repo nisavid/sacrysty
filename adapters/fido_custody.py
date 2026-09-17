@@ -12,10 +12,8 @@ adapter.
 
 from __future__ import annotations
 
-import errno
 import hashlib
 import os
-import pathlib
 import selectors
 import signal
 import subprocess
@@ -23,20 +21,25 @@ import sys
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from types import FrameType
 from typing import BinaryIO
 
-ROOT = pathlib.Path(__file__).parents[1]
-sys.path.insert(0, str(ROOT))
+from sacrysty_runtime.process_groups import (
+    ProcessGroupError,
+    ProcessGroupOwnershipLost,
+    SignalStep,
+    leader_exited_unreaped,
+    terminate_and_reap,
+)
+from sacrysty_runtime.strict_json import StrictJsonError, decode_strict_json
 
-from conformance.strict_json import StrictJsonError, decode_strict_json
-
-_UNBLOCK_SIGINT_AND_EXEC = r"""
+_UNBLOCK_CANCELLATION_AND_EXEC = r"""
 import os
 import signal
 import sys
 
 try:
-    signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT})
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM})
     os.execvpe(sys.argv[1], sys.argv[1:], os.environ)
 except OSError:
     os.write(2, b"worker setup failed\n")
@@ -57,8 +60,10 @@ class _WorkerTimedOut(Exception):
     pass
 
 
-class _WorkerOwnershipLost(Exception):
-    pass
+class _CallerTerminated(BaseException):
+    def __init__(self, signal_number: int, frame: FrameType | None) -> None:
+        self.signal_number = signal_number
+        self.frame = frame
 
 
 @dataclass(frozen=True)
@@ -106,75 +111,21 @@ def _close_pipe(pipe: BinaryIO) -> None:
 def _terminate_and_reap(process: subprocess.Popen[bytes]) -> None:
     """Request group termination, close pipes, and boundedly attempt leader reaping."""
 
-    group_cleanup_error: OSError | None = None
     try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except OSError as exc:
-        if exc.errno != errno.ESRCH:
-            try:
-                leader_exited = _leader_exited_unreaped(process)
-            except _WorkerOwnershipLost as ownership_error:
-                raise CustodyError("worker ownership lost") from ownership_error
-            if exc.errno != errno.EPERM or not leader_exited:
-                group_cleanup_error = exc
-                # A leader-only fallback cannot establish descendant cleanup.
-                # Try it boundedly, but retain the group failure for the caller.
-                try:
-                    process.kill()
-                except OSError:
-                    pass
-
-    for pipe in (process.stdin, process.stdout, process.stderr):
-        if pipe is not None:
-            _close_pipe(pipe)
-
-    try:
-        process.wait(timeout=0.5)
-    except subprocess.TimeoutExpired:
-        try:
-            process.kill()
-        except OSError:
-            pass
-        try:
-            process.wait(timeout=0.5)
-        except subprocess.TimeoutExpired as exc:
-            raise CustodyError("worker cleanup failure") from exc
-
-    if group_cleanup_error is not None:
-        raise CustodyError("worker cleanup failure") from group_cleanup_error
-
-    # After leader reaping, only definitive group absence completes cleanup.
-    # This also resolves a denied signal without treating denial as absence.
-    deadline = time.monotonic() + 0.5
-    last_permission_denial: PermissionError | None = None
-    while True:
-        try:
-            os.killpg(process.pid, 0)
-        except ProcessLookupError:
-            break
-        except PermissionError as exc:
-            last_permission_denial = exc
-        except OSError as exc:
-            raise CustodyError("worker cleanup failure") from exc
-        else:
-            last_permission_denial = None
-        if time.monotonic() >= deadline:
-            if last_permission_denial is not None:
-                raise CustodyError("worker cleanup failure") from last_permission_denial
-            raise CustodyError("worker cleanup failure")
-        time.sleep(0.01)
-
-
-def _leader_exited_unreaped(process: subprocess.Popen[bytes]) -> bool:
-    try:
-        status = os.waitid(
-            os.P_PID,
-            process.pid,
-            os.WEXITED | os.WNOHANG | os.WNOWAIT,
+        terminate_and_reap(
+            process,
+            (SignalStep(signal.SIGKILL),),
+            leader_wait_seconds=0.5,
+            absence_wait_seconds=0.5,
         )
-    except ChildProcessError as exc:
-        raise _WorkerOwnershipLost from exc
-    return status is not None
+    except ProcessGroupOwnershipLost as exc:
+        raise CustodyError("worker ownership lost") from exc
+    except ProcessGroupError as exc:
+        raise CustodyError("worker cleanup failure") from exc
+    finally:
+        for pipe in (process.stdin, process.stdout, process.stderr):
+            if pipe is not None:
+                _close_pipe(pipe)
 
 
 def _bounded_communicate(
@@ -249,12 +200,24 @@ def _bounded_communicate(
     finally:
         selector.close()
 
-    while not _leader_exited_unreaped(process):
+    while not leader_exited_unreaped(process):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise _WorkerTimedOut
         time.sleep(min(0.01, remaining))
     return bytes(buffers["stdout"]), bytes(buffers["stderr"])
+
+
+def _propagate_sigterm(
+    previous_handler: object, cancellation: _CallerTerminated
+) -> None:
+    if previous_handler == signal.SIG_DFL:
+        os.kill(os.getpid(), signal.SIGTERM)
+        raise CustodyError("worker interruption propagation failed")
+    if callable(previous_handler):
+        previous_handler(cancellation.signal_number, cancellation.frame)
+        raise CustodyError("worker interrupted")
+    raise CustodyError("worker interrupted")
 
 
 class OneShotCustodyAdapter:
@@ -288,18 +251,30 @@ class OneShotCustodyAdapter:
             raise CustodyError("envelope too large")
         process: subprocess.Popen[bytes] | None = None
         process_owned = True
+        cancellation: _CallerTerminated | None = None
+        previous_signal_mask: set[signal.Signals] | None = None
+        previous_sigterm_handler: object | None = None
+        sigterm_handler_installed = False
         try:
             previous_signal_mask = signal.pthread_sigmask(
-                signal.SIG_BLOCK, {signal.SIGINT}
+                signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM}
             )
+
+            def terminate_caller(signal_number: int, frame: FrameType | None) -> None:
+                raise _CallerTerminated(signal_number, frame)
+
+            previous_sigterm_handler = signal.getsignal(signal.SIGTERM)
+            if previous_sigterm_handler != signal.SIG_IGN:
+                signal.signal(signal.SIGTERM, terminate_caller)
+                sigterm_handler_installed = True
             try:
                 command = self._command
-                if signal.SIGINT not in previous_signal_mask:
+                if not {signal.SIGINT, signal.SIGTERM} <= previous_signal_mask:
                     command = (
                         sys.executable,
                         "-B",
                         "-c",
-                        _UNBLOCK_SIGINT_AND_EXEC,
+                        _UNBLOCK_CANCELLATION_AND_EXEC,
                         *command,
                     )
                 try:
@@ -331,15 +306,31 @@ class OneShotCustodyAdapter:
                 raise CustodyError("worker output too large") from exc
             except OSError as exc:
                 raise CustodyError("worker I/O failure") from exc
-            except _WorkerOwnershipLost as exc:
+            except ProcessGroupOwnershipLost as exc:
                 process_owned = False
                 raise CustodyError("worker ownership lost") from exc
+        except _CallerTerminated as exc:
+            cancellation = exc
         finally:
-            if process is not None and process_owned:
-                # The leader may have exited while an ordinary same-group
-                # descendant remains. Every completion path requests group
-                # termination and bounded leader reaping.
-                _terminate_and_reap(process)
+            if previous_signal_mask is not None:
+                signal.pthread_sigmask(
+                    signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM}
+                )
+            try:
+                if process is not None and process_owned:
+                    # The leader may have exited while an ordinary same-group
+                    # descendant remains. Every completion path requests group
+                    # termination and bounded leader reaping.
+                    _terminate_and_reap(process)
+            finally:
+                if sigterm_handler_installed and previous_sigterm_handler is not None:
+                    signal.signal(signal.SIGTERM, previous_sigterm_handler)
+                if previous_signal_mask is not None:
+                    signal.pthread_sigmask(signal.SIG_SETMASK, previous_signal_mask)
+        if cancellation is not None:
+            if previous_sigterm_handler is None:
+                raise CustodyError("worker interrupted")
+            _propagate_sigterm(previous_sigterm_handler, cancellation)
         if process is None:
             raise CustodyError("worker unavailable")
         if process.returncode != 0:

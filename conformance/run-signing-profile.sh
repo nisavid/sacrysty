@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 # Public, disposable profile evidence. Every key and signature is created in a
 # temporary directory; the default personal stores are disabled.
@@ -12,88 +13,34 @@ sq_evidence_require_clean_source "$root" signing-profile
 sq_evidence_select_hash_tools
 temporary_root=$(sq_evidence_external_tmp_root "$root")
 
-work=$(mktemp -d "$temporary_root/sacrysty-signing-profile.XXXXXX")
+work=
 cleanup_work() {
   if [[ -n ${work:-} ]]; then
-    sq_evidence_remove_and_verify "$work" 'temporary signing-profile directory'
+    sq_evidence_finish_runner_cleanup \
+      "$work" 'temporary signing-profile directory'
+  else
+    sq_evidence_confirm_active_process_cleanup
+    sq_evidence_write_runner_cleanup_receipt
   fi
 }
 trap cleanup_work EXIT
+trap sq_evidence_interrupt_runner TERM
+work=$(mktemp -d "$temporary_root/sacrysty-signing-profile.XXXXXX")
 message="$work/message.bin"
-key="$work/signing-key.pgp"
-cert="$work/signer-cert.pgp"
-sig="$work/message.sig"
-tampered="$work/tampered.bin"
-tampered_sig="$work/tampered.sig"
-wrong_key="$work/wrong-key.pgp"
-wrong_cert="$work/wrong-cert.pgp"
 cp "$root/fixtures/signing/message.bin" "$message"
-
-sq_evidence_require_tool_success \
-  'signing key generation' "$work/generate.status" \
-  "$work/generate.stdout" "$work/generate.stderr" \
-  "$sq_bin" "${SQ_EVIDENCE_SQ_COMMON[@]}" --time 20260910 key generate --own-key \
-  --userid 'Sacrysty Fixture <fixture@example.invalid>' --profile rfc9580 \
-  --cipher-suite cv25519 --without-password --output "$key" \
-  --rev-cert "$work/revocation.asc"
-sq_evidence_require_tool_success \
-  'signing certificate extraction' "$work/extract.status" \
-  "$work/extract.stdout" "$work/extract.stderr" \
-  "$sq_bin" "${SQ_EVIDENCE_SQ_COMMON[@]}" key delete \
-  --cert-file "$key" --output "$cert"
-sq_evidence_require_tool_success \
-  'detached signing' "$work/sign.status" \
-  "$work/sign.stdout" "$work/sign.stderr" \
-  "$sq_bin" "${SQ_EVIDENCE_SQ_COMMON[@]}" --time 20260910 sign --binary \
-  --signature-file "$sig" --signer-file "$key" "$message"
-sq_evidence_require_tool_success \
-  'independent detached-signature verification' "$work/verify.status" \
-  "$work/verify.stdout" "$work/verify.stderr" \
-  "$sqv_bin" --time 20260910 --keyring "$cert" --signature-file "$sig" \
-  "$message"
-
-run_rejection() {
-  local status_file=$1
-  shift
-  sq_evidence_require_tool_rejection \
-    'negative verification' "$status_file" \
-    "${status_file}.stdout" "${status_file}.stderr" "$@"
-}
-
-cp "$message" "$tampered"
-printf 'tamper\n' >>"$tampered"
-run_rejection "$work/tampered-message.status" "$sqv_bin" --time 20260910 \
-  --keyring "$cert" --signature-file "$sig" "$tampered"
-cp "$sig" "$tampered_sig"
-printf 'tamper\n' >>"$tampered_sig"
-run_rejection "$work/tampered-signature.status" "$sqv_bin" --time 20260910 \
-  --keyring "$cert" --signature-file "$tampered_sig" "$message"
-
-sq_evidence_require_tool_success \
-  'wrong-certificate key generation' "$work/wrong-generate.status" \
-  "$work/wrong-generate.stdout" "$work/wrong-generate.stderr" \
-  "$sq_bin" "${SQ_EVIDENCE_SQ_COMMON[@]}" --time 20260910 key generate --own-key \
-  --userid 'Sacrysty Other Fixture <other@example.invalid>' --profile rfc9580 \
-  --cipher-suite cv25519 --without-password --output "$wrong_key" \
-  --rev-cert "$work/wrong-revocation.asc"
-sq_evidence_require_tool_success \
-  'wrong-certificate extraction' "$work/wrong-extract.status" \
-  "$work/wrong-extract.stdout" "$work/wrong-extract.stderr" \
-  "$sq_bin" "${SQ_EVIDENCE_SQ_COMMON[@]}" key delete \
-  --cert-file "$wrong_key" --output "$wrong_cert"
-run_rejection "$work/wrong-certificate.status" "$sqv_bin" --time 20260910 \
-  --keyring "$wrong_cert" --signature-file "$sig" "$message"
+sq_evidence_classical_round_trip "$work" "$message" "$sq_bin" "$sqv_bin"
+sig=$SQ_EVIDENCE_SIGNATURE
 
 tampered_message_command=$(
-  printf '%s' "$sqv_bin --time 20260910 --keyring signer-cert.pgp --signature-file message.sig tampered.bin" \
+  printf '%s' "$sqv_bin --time 20260910 --keyring classical-cert.pgp --signature-file message.sig tampered-message.bin" \
     | sq_evidence_json_string
 )
 tampered_signature_command=$(
-  printf '%s' "$sqv_bin --time 20260910 --keyring signer-cert.pgp --signature-file tampered.sig message.bin" \
+  printf '%s' "$sqv_bin --time 20260910 --keyring classical-cert.pgp --signature-file tampered-signature.sig message.bin" \
     | sq_evidence_json_string
 )
 wrong_certificate_command=$(
-  printf '%s' "$sqv_bin --time 20260910 --keyring wrong-cert.pgp --signature-file message.sig message.bin" \
+  printf '%s' "$sqv_bin --time 20260910 --keyring other-cert.pgp --signature-file message.sig message.bin" \
     | sq_evidence_json_string
 )
 source_revision=$(git -C "$root" rev-parse HEAD)
@@ -121,15 +68,15 @@ signature_sha256=$(sq_evidence_hash 256 "$sig")
 signature_sha512=$(sq_evidence_hash 512 "$sig")
 tampered_message_status=$(cat "$work/tampered-message.status")
 tampered_message_stderr=$(
-  sq_evidence_json_redacted_file "$work/tampered-message.status.stderr" "$work"
+  sq_evidence_json_redacted_file "$work/tampered-message.stderr" "$work"
 )
 tampered_signature_status=$(cat "$work/tampered-signature.status")
 tampered_signature_stderr=$(
-  sq_evidence_json_redacted_file "$work/tampered-signature.status.stderr" "$work"
+  sq_evidence_json_redacted_file "$work/tampered-signature.stderr" "$work"
 )
 wrong_certificate_status=$(cat "$work/wrong-certificate.status")
 wrong_certificate_stderr=$(
-  sq_evidence_json_redacted_file "$work/wrong-certificate.status.stderr" "$work"
+  sq_evidence_json_redacted_file "$work/wrong-certificate.stderr" "$work"
 )
 removed_work=$work
 if ! cleanup_work || [[ -e $removed_work ]]; then

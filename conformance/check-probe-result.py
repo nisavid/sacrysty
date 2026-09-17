@@ -7,11 +7,15 @@ import re
 import sys
 from pathlib import Path
 
-from strict_json import (
+ROOT = Path(__file__).parents[1]
+sys.path.insert(0, str(ROOT))
+
+from sacrysty_runtime.strict_json import (
     DuplicateMemberError,
     InvalidJsonSyntaxError,
     InvalidUtf8Error,
     NonFiniteNumberError,
+    UnrepresentableNumberError,
     decode_strict_json,
 )
 
@@ -37,6 +41,8 @@ def _load_result(path: Path) -> dict[str, object]:
             else "non-finite result number"
         )
         raise ResultError(f"{label}: {exc.value}") from exc
+    except UnrepresentableNumberError as exc:
+        raise ResultError(f"unrepresentable result number: {exc.value}") from exc
     except (InvalidUtf8Error, InvalidJsonSyntaxError) as exc:
         raise ResultError("probe result is not readable strict JSON") from exc
     if not isinstance(result, dict):
@@ -238,7 +244,7 @@ def _validate_signing(result: dict[str, object], revision: str) -> None:
         _require(
             isinstance(exit_status, int)
             and not isinstance(exit_status, bool)
-            and exit_status != 0,
+            and 1 <= exit_status <= 123,
             f"{name} diagnostic is not a rejection",
         )
         _require(

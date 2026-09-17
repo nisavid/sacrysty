@@ -24,27 +24,42 @@ accepted inert-extension rules. It does not validate record-family bodies or
 consume them operationally. Its baseline consumer understands no required
 extensions. Invalid shapes and unsupported inputs fail even when Python
 optimization is enabled.
+The relationship between a record-ID publisher qualifier and the `publisher`
+field remains unresolved; this proposal adds neither equality nor mismatch
+semantics.
 
 The synthetic custody adapter bounds input, both output streams, and waiting
-time. After worker creation, every completion path requests termination of
-ordinary same-process-group descendants and boundedly attempts to reap the
-worker leader. The adapter returns no plaintext result when the operating
-system reports a group-cleanup error other than an already absent process
-group. This fail-closed result does not establish operating-system cleanup
-after a kernel denial. Duplicate response fields are rejected. Test controls
-belong to disposable workers, rather than the adapter's environment forwarding
-policy. A process group is not a sandbox for a worker that deliberately escapes
-it.
+time. It blocks catchable `SIGINT` and `SIGTERM` before worker creation, assigns
+the owned handle before restoring the caller's signal mask, and completes
+cleanup before restoring and preserving the caller's normal `SIGTERM`
+disposition. Every completion path requests termination of ordinary
+same-process-group descendants and boundedly attempts to reap the worker
+leader.
+
+A nonzero group-signal denial while the owned leader is running fails. If the
+leader is still owned and observed exited, an `EPERM` signal result permits the
+adapter to reap that leader and continue only with signal-zero probes. Denial
+is never absence: only a later definitive absent-group result succeeds;
+persistent denial, presence, or timeout fails without plaintext. Duplicate
+response fields are rejected. Test controls belong to disposable workers,
+rather than the adapter's environment forwarding policy. A process group is
+not a sandbox for a worker that deliberately escapes it, and this contract does
+not claim recovery from uncatchable parent death.
 
 The crypto probes record observed behavior for the selected standard tools.
 They require clean source, portable hash tools, admitted JSON results, and
 verified temporary cleanup before reporting success. Selected tool processes
 and aggregate result capture have fixed time, stream, and regular-file bounds;
 ordinary same-process-group descendants are terminated before completion.
-These controls are not a malicious-process sandbox. Post-quantum capability
-remains subject to the existing positive-operation and independent-verification
-gate; explicit unsupported capability, indeterminate probe failure, and failed
-round trip remain distinct results.
+Each inner helper proves group absence, the runner consumes that receipt before
+deleting its material and writing its own receipt, and the outer helper proves
+runner-group absence before admitting the receipt or deleting aggregate result
+storage. Selected processes receive an explicit value-free environment rather
+than the caller's complete environment. Missing receipts, live descendants,
+and persistent denial fail. These controls are not a malicious-process sandbox.
+Post-quantum capability remains subject to the existing positive-operation and
+independent-verification gate; explicit unsupported capability, indeterminate
+probe failure, and failed round trip remain distinct results.
 
 ## Security considerations
 

@@ -7,13 +7,14 @@ import hashlib
 import json
 import os
 import pathlib
+import shlex
 import shutil
 import stat
 import subprocess
 import sys
 import unittest
 
-from test_support import external_temporary_directory
+from test_support import ConstructedRepository
 
 ROOT = pathlib.Path(__file__).parents[1]
 RUNNER = ROOT / "conformance/run-sq.sh"
@@ -22,85 +23,27 @@ PROCESS_HELPER = ROOT / "conformance/sq_evidence_process.py"
 
 
 def write_executable(path: pathlib.Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
 class RunSqTests(unittest.TestCase):
     def make_repository(self) -> tuple[pathlib.Path, dict[str, str]]:
-        self.temporary_directory = external_temporary_directory(
-            ROOT, prefix="sacrysty-run-sq-test-"
+        fixture = ConstructedRepository(ROOT, prefix="sacrysty-run-sq-test-")
+        self.addCleanup(fixture.cleanup)
+        self.constructed_repository = fixture
+        repository = fixture.repository
+        fixture.copy(RUNNER, "conformance/run-sq.sh")
+        fixture.copy(SHARED_HELPER, "conformance/sq-evidence-lib.sh")
+        fixture.copy(PROCESS_HELPER, "conformance/sq_evidence_process.py")
+        fixture.copy_tree(ROOT / "sacrysty_runtime", "sacrysty_runtime")
+        fixture.write(
+            "fixtures/rfc9580/message.txt",
+            "Sacrysty disposable conformance fixture.\n",
         )
-        self.addCleanup(self.temporary_directory.cleanup)
-        test_root = pathlib.Path(self.temporary_directory.name)
-        repository = test_root / "repository"
-        runtime = test_root / "runtime"
-        (repository / "conformance").mkdir(parents=True)
-        (repository / "fixtures/rfc9580").mkdir(parents=True)
-        (repository / "fake-bin").mkdir()
-        (runtime / "tmp").mkdir(parents=True)
-        (runtime / "home").mkdir()
-        (repository / "hooks").mkdir()
-        shutil.copy2(RUNNER, repository / "conformance/run-sq.sh")
-        shutil.copy2(SHARED_HELPER, repository / "conformance/sq-evidence-lib.sh")
-        shutil.copy2(PROCESS_HELPER, repository / "conformance/sq_evidence_process.py")
-        (repository / "fixtures/rfc9580/message.txt").write_text(
-            "Sacrysty disposable conformance fixture.\n"
-        )
-
-        environment = {
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_CONFIG_GLOBAL": str(runtime / "missing-global-gitconfig"),
-            "HOME": str(runtime / "home"),
-            "LC_ALL": "C",
-            "PATH": os.environ["PATH"],
-            "XDG_CONFIG_HOME": str(runtime / "home/config"),
-            "TMPDIR": str(runtime / "tmp"),
-            "TEST_RUNTIME": str(runtime),
-        }
-        subprocess.run(
-            ["git", "init", "-q", str(repository)], check=True, env=environment
-        )
-        subprocess.run(
-            ["git", "-C", str(repository), "config", "user.name", "Fixture"],
-            check=True,
-            env=environment,
-        )
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repository),
-                "config",
-                "user.email",
-                "fixture@example.invalid",
-            ],
-            check=True,
-            env=environment,
-        )
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repository),
-                "config",
-                "core.hooksPath",
-                str(repository / "hooks"),
-            ],
-            check=True,
-            env=environment,
-        )
-        subprocess.run(
-            ["git", "-C", str(repository), "add", "conformance", "fixtures"],
-            check=True,
-            env=environment,
-        )
-        subprocess.run(
-            ["git", "-C", str(repository), "commit", "-q", "-m", "fixture"],
-            check=True,
-            env=environment,
-        )
-        return repository, environment
+        fixture.commit("conformance", "fixtures", "sacrysty_runtime")
+        return repository, fixture.environment
 
     def commit_paths(
         self,
@@ -108,27 +51,32 @@ class RunSqTests(unittest.TestCase):
         environment: dict[str, str],
         *paths: str,
     ) -> None:
-        subprocess.run(
-            ["git", "-C", str(repository), "add", "--", *paths],
-            check=True,
-            env=environment,
-        )
-        subprocess.run(
-            ["git", "-C", str(repository), "commit", "-q", "-m", "test input"],
-            check=True,
-            env=environment,
-        )
+        del repository, environment
+        self.constructed_repository.commit(*paths, message="test input")
 
     def install_successful_fake_tools(
         self, repository: pathlib.Path, environment: dict[str, str]
     ) -> pathlib.Path:
         tool_log = pathlib.Path(environment["TEST_RUNTIME"]) / "tool.log"
+        control_directory = pathlib.Path(environment["TEST_RUNTIME"]) / "controls"
+        control_directory.mkdir(exist_ok=True)
+        tool_log_shell = shlex.quote(str(tool_log))
+        control_directory_shell = shlex.quote(str(control_directory))
         write_executable(
             repository / "fake-bin/sq",
-            r"""#!/bin/sh
-printf 'sq:%s\n' "$*" >>"$FAKE_TOOL_LOG"
-if [ "${1-}" = version ]; then
-    if [ "${FAKE_TOOL_FAULT:-}" = stdout-flood ]; then
+            rf"""#!/bin/sh
+tool_log={tool_log_shell}
+control_directory={control_directory_shell}
+control() {{
+    if [ -f "$control_directory/$1" ]; then
+        cat "$control_directory/$1"
+    else
+        printf '%s' "$2"
+    fi
+}}
+printf 'sq:%s\n' "$*" >>"$tool_log"
+if [ "${{1-}}" = version ]; then
+    if [ "$(control fault none)" = stdout-flood ]; then
         python3 -c 'import sys; sys.stdout.buffer.write(b"x" * (2 * 1024 * 1024))'
         exit 0
     fi
@@ -138,7 +86,7 @@ if [ "${1-}" = version ]; then
 fi
 case " $* " in
     *' mldsa65-ed25519 '*)
-        case "${FAKE_PQC_GENERATION:-unsupported}" in
+        case "$(control pqc-generation unsupported)" in
             unsupported)
                 printf 'Error: Unsupported public key algorithm: ML-DSA-65+Ed25519\n' >&2
                 exit 1
@@ -159,7 +107,7 @@ case " $* " in
 esac
 case " $* " in
     *' sign '*'pqc-key.pgp '*)
-        if [ "${FAKE_PQC_ROUND_TRIP:-success}" = fail ]; then
+        if [ "$(control pqc-round-trip success)" = fail ]; then
             printf 'Error: synthetic signing failure\n' >&2
             exit 70
         fi
@@ -178,15 +126,16 @@ done
         )
         write_executable(
             repository / "fake-bin/sqv",
-            r"""#!/bin/sh
-printf 'sqv:%s\n' "$*" >>"$FAKE_TOOL_LOG"
-if [ "${1-}" = --version ]; then
+            rf"""#!/bin/sh
+tool_log={tool_log_shell}
+printf 'sqv:%s\n' "$*" >>"$tool_log"
+if [ "${{1-}}" = --version ]; then
     printf 'sqv "quoted" \\ path\nsecond\tline\n'
     printf 'diagnostic: "quoted" \\ value\rcontrol\n' >&2
     exit 0
 fi
 case " $* " in
-    *'/tampered.txt '*|*'/tampered.sig '*|*'/other-cert.pgp '*) exit 1 ;;
+    *'/tampered-message.bin '*|*'/tampered-signature.sig '*|*'/other-cert.pgp '*) exit 1 ;;
 esac
 exit 0
 """,
@@ -194,12 +143,16 @@ exit 0
         self.commit_paths(repository, environment, "fake-bin")
         environment.update(
             {
-                "FAKE_TOOL_LOG": str(tool_log),
                 "SQ": str(repository / "fake-bin/sq"),
                 "SQV": str(repository / "fake-bin/sqv"),
             }
         )
         return tool_log
+
+    def set_control(self, environment: dict[str, str], name: str, value: str) -> None:
+        control = pathlib.Path(environment["TEST_RUNTIME"]) / "controls" / name
+        control.parent.mkdir(exist_ok=True)
+        control.write_text(value, encoding="ascii")
 
     def test_untracked_dirt_is_rejected_before_tool_work(self) -> None:
         repository, environment = self.make_repository()
@@ -311,7 +264,7 @@ exec "$REAL_GIT" "$@"
     def test_stdout_flood_fails_instead_of_becoming_probe_evidence(self) -> None:
         repository, environment = self.make_repository()
         self.install_successful_fake_tools(repository, environment)
-        environment["FAKE_TOOL_FAULT"] = "stdout-flood"
+        self.set_control(environment, "fault", "stdout-flood")
 
         result = subprocess.run(
             ["bash", str(repository / "conformance/run-sq.sh")],
@@ -449,7 +402,7 @@ print(hashlib.new("sha" + algorithm, pathlib.Path(path).read_bytes()).hexdigest(
     def test_indeterminate_pqc_generation_failure_is_not_unsupported(self) -> None:
         repository, environment = self.make_repository()
         self.install_successful_fake_tools(repository, environment)
-        environment["FAKE_PQC_GENERATION"] = "indeterminate"
+        self.set_control(environment, "pqc-generation", "indeterminate")
 
         result = subprocess.run(
             ["bash", str(repository / "conformance/run-sq.sh")],
@@ -466,7 +419,7 @@ print(hashlib.new("sha" + algorithm, pathlib.Path(path).read_bytes()).hexdigest(
     def test_abnormal_pqc_generation_exit_is_not_unsupported(self) -> None:
         repository, environment = self.make_repository()
         self.install_successful_fake_tools(repository, environment)
-        environment["FAKE_PQC_GENERATION"] = "abnormal"
+        self.set_control(environment, "pqc-generation", "abnormal")
 
         result = subprocess.run(
             ["bash", str(repository / "conformance/run-sq.sh")],
@@ -483,9 +436,8 @@ print(hashlib.new("sha" + algorithm, pathlib.Path(path).read_bytes()).hexdigest(
     def test_failed_pqc_round_trip_is_nonpositive_and_fails_the_probe(self) -> None:
         repository, environment = self.make_repository()
         self.install_successful_fake_tools(repository, environment)
-        environment.update(
-            {"FAKE_PQC_GENERATION": "success", "FAKE_PQC_ROUND_TRIP": "fail"}
-        )
+        self.set_control(environment, "pqc-generation", "success")
+        self.set_control(environment, "pqc-round-trip", "fail")
 
         result = subprocess.run(
             ["bash", str(repository / "conformance/run-sq.sh")],
@@ -504,7 +456,7 @@ print(hashlib.new("sha" + algorithm, pathlib.Path(path).read_bytes()).hexdigest(
     def test_positive_pqc_round_trip_uses_observed_runtime_result(self) -> None:
         repository, environment = self.make_repository()
         self.install_successful_fake_tools(repository, environment)
-        environment["FAKE_PQC_GENERATION"] = "success"
+        self.set_control(environment, "pqc-generation", "success")
 
         result = subprocess.run(
             ["bash", str(repository / "conformance/run-sq.sh")],

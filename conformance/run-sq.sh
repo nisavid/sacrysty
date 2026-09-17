@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 # Public, disposable conformance probe. It creates all key material in a
 # temporary directory and removes it on exit. It never uses a default key or
@@ -13,81 +14,26 @@ sq_evidence_require_clean_source "$root_dir" conformance
 sq_evidence_select_hash_tools
 temporary_root=$(sq_evidence_external_tmp_root "$root_dir")
 
-work_dir=$(mktemp -d "$temporary_root/sacrysty-conformance.XXXXXX")
+work_dir=
 cleanup_work_dir() {
   if [[ -n ${work_dir:-} ]]; then
-    sq_evidence_remove_and_verify "$work_dir" 'temporary conformance directory'
+    sq_evidence_finish_runner_cleanup \
+      "$work_dir" 'temporary conformance directory'
+  else
+    sq_evidence_confirm_active_process_cleanup
+    sq_evidence_write_runner_cleanup_receipt
   fi
 }
 trap cleanup_work_dir EXIT
+trap sq_evidence_interrupt_runner TERM
+work_dir=$(mktemp -d "$temporary_root/sacrysty-conformance.XXXXXX")
 
 message="$work_dir/message.txt"
-key="$work_dir/fixture-key.pgp"
-revocation="$work_dir/fixture-revocation.pgp"
-certificate="$work_dir/fixture-cert.pgp"
-signature="$work_dir/message.sig"
-tampered="$work_dir/tampered.txt"
-tampered_signature="$work_dir/tampered.sig"
-other_key="$work_dir/other-key.pgp"
-other_certificate="$work_dir/other-cert.pgp"
 cp "$root_dir/fixtures/rfc9580/message.txt" "$message"
-
-sq_evidence_require_tool_success \
-  'classical key generation' "$work_dir/generate.status" \
-  "$work_dir/generate.stdout" "$work_dir/generate.stderr" \
-  "$sq_bin" "${SQ_EVIDENCE_SQ_COMMON[@]}" --time 20260910 key generate \
-  --own-key --userid 'Sacrysty Fixture <fixture@example.invalid>' \
-  --profile rfc9580 --cipher-suite cv25519 --without-password \
-  --output "$key" --rev-cert "$revocation"
-sq_evidence_require_tool_success \
-  'classical certificate extraction' "$work_dir/extract.status" \
-  "$work_dir/extract.stdout" "$work_dir/extract.stderr" \
-  "$sq_bin" "${SQ_EVIDENCE_SQ_COMMON[@]}" key delete \
-  --cert-file "$key" --output "$certificate"
-sq_evidence_require_tool_success \
-  'classical detached signing' "$work_dir/sign.status" \
-  "$work_dir/sign.stdout" "$work_dir/sign.stderr" \
-  "$sq_bin" "${SQ_EVIDENCE_SQ_COMMON[@]}" --time 20260910 sign \
-  --signer-file "$key" --signature-file "$signature" --binary "$message"
-sq_evidence_require_tool_success \
-  'classical independent verification' "$work_dir/verify.status" \
-  "$work_dir/verify.stdout" "$work_dir/verify.stderr" \
-  "$sqv_bin" --time 20260910 --keyring "$certificate" \
-  --signature-file "$signature" "$message"
-
-cp "$message" "$tampered"
-printf 'tamper\n' >>"$tampered"
-sq_evidence_require_tool_rejection \
-  'tampered-message verification' "$work_dir/tamper.status" \
-  "$work_dir/tamper.stdout" "$work_dir/tamper.stderr" \
-  "$sqv_bin" --time 20260910 --keyring "$certificate" \
-  --signature-file "$signature" "$tampered"
-
-cp "$signature" "$tampered_signature"
-printf 'tamper\n' >>"$tampered_signature"
-sq_evidence_require_tool_rejection \
-  'tampered-signature verification' "$work_dir/tampered-signature.status" \
-  "$work_dir/tampered-signature.stdout" "$work_dir/tampered-signature.stderr" \
-  "$sqv_bin" --time 20260910 --keyring "$certificate" \
-  --signature-file "$tampered_signature" "$message"
-
-sq_evidence_require_tool_success \
-  'wrong-certificate key generation' "$work_dir/other-generate.status" \
-  "$work_dir/other-generate.stdout" "$work_dir/other-generate.stderr" \
-  "$sq_bin" "${SQ_EVIDENCE_SQ_COMMON[@]}" --time 20260910 key generate \
-  --own-key --userid 'Sacrysty Other Fixture <other@example.invalid>' \
-  --profile rfc9580 --cipher-suite cv25519 --without-password \
-  --output "$other_key" --rev-cert "$work_dir/other-rev.pgp"
-sq_evidence_require_tool_success \
-  'wrong-certificate extraction' "$work_dir/other-extract.status" \
-  "$work_dir/other-extract.stdout" "$work_dir/other-extract.stderr" \
-  "$sq_bin" "${SQ_EVIDENCE_SQ_COMMON[@]}" key delete \
-  --cert-file "$other_key" --output "$other_certificate"
-sq_evidence_require_tool_rejection \
-  'wrong-certificate verification' "$work_dir/wrong-certificate.status" \
-  "$work_dir/wrong-certificate.stdout" "$work_dir/wrong-certificate.stderr" \
-  "$sqv_bin" --time 20260910 --keyring "$other_certificate" \
-  --signature-file "$signature" "$message"
+sq_evidence_classical_round_trip "$work_dir" "$message" "$sq_bin" "$sqv_bin"
+signature=$SQ_EVIDENCE_SIGNATURE
+tampered=$SQ_EVIDENCE_TAMPERED_MESSAGE
+tampered_signature=$SQ_EVIDENCE_TAMPERED_SIGNATURE
 
 # RFC 9980 is capability-gated. Only the tool's explicit capability rejection
 # is "unsupported"; other generation failures and failed round trips are

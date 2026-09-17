@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import shutil
@@ -12,13 +13,12 @@ import subprocess
 import time
 import unittest
 
-from test_support import external_temporary_directory
+from test_support import ConstructedRepository
 
 ROOT = pathlib.Path(__file__).parents[1]
 AGGREGATE = ROOT / "scripts/check-conformance.sh"
 RESULT_CHECKER = ROOT / "conformance/check-probe-result.py"
 SHARED_HELPER = ROOT / "conformance/sq-evidence-lib.sh"
-STRICT_JSON_HELPER = ROOT / "conformance/strict_json.py"
 PROCESS_HELPER = ROOT / "conformance/sq_evidence_process.py"
 
 
@@ -35,39 +35,52 @@ TEST_SYNTHETIC_CHECKS = ("fixture-check.py", "fixture-test.py")
 
 
 PROBE_STUB = r"""#!/usr/bin/env python3
+import atexit
 import json
 import os
 import pathlib
+import signal
 import subprocess
 import time
 
+runtime = pathlib.Path(__RUNTIME__)
+probe_log = pathlib.Path(__PROBE_LOG__)
+mode_path = runtime / "aggregate-mode"
+mode = mode_path.read_text(encoding="ascii") if mode_path.is_file() else "normal"
+interrupted = False
+def request_interruption(_signal_number, _frame):
+    global interrupted
+    interrupted = True
+signal.signal(signal.SIGTERM, request_interruption)
+def write_runner_receipt():
+    receipt = os.environ.get("SACRYSTY_RUNNER_CLEANUP_RECEIPT")
+    if receipt and mode != "missing-runner-receipt":
+        pathlib.Path(receipt).write_bytes(
+            b"io.nisavid.sacrysty.runner-cleanup/v1\n"
+        )
+atexit.register(write_runner_receipt)
 revision = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
 sha256 = "b" * 64
 sha512 = "c" * 128
 fixture = {"bytes": 1, "sha256": sha256, "sha512": sha512}
 name = pathlib.Path(__file__).name
-with open(os.environ["AGGREGATE_PROBE_LOG"], "a", encoding="utf-8") as log:
+with probe_log.open("a", encoding="utf-8") as log:
     log.write(name + "\n")
-if (
-    os.environ.get("FAKE_AGGREGATE_RESULT") == "startup-cancel-hang"
-    and name == "run-sq.sh"
-):
-    pathlib.Path(os.environ["AGGREGATE_SUPERVISOR_PID"]).write_text(
-        str(os.getppid())
-    )
-    pathlib.Path(os.environ["AGGREGATE_RUNNER_PID"]).write_text(str(os.getpid()))
-    while True:
-        time.sleep(1)
-if (
-    os.environ.get("FAKE_AGGREGATE_RESULT") == "same-group-descendant"
-    and name == "run-sq.sh"
-):
-    descendant_pid_path = os.environ["AGGREGATE_DESCENDANT_PID"]
+if mode == "startup-cancel-hang" and name == "run-sq.sh":
+    runtime.joinpath("startup-supervisor.pid").write_text(str(os.getppid()))
+    runtime.joinpath("startup-runner.pid").write_text(str(os.getpid()))
+    deadline = time.monotonic() + 5
+    while not interrupted and time.monotonic() < deadline:
+        time.sleep(0.1)
+    raise SystemExit(143)
+if mode == "same-group-descendant" and name == "run-sq.sh":
+    descendant_pid_path = str(runtime / "descendant.pid")
     child_program = (
         "import os,pathlib,time\n"
         f"pid_path=pathlib.Path({descendant_pid_path!r})\n"
         "pid_path.write_text(f'{os.getpid()}:{os.getpgrp()}')\n"
-        "while True: time.sleep(1)\n"
+        "deadline=time.monotonic()+5\n"
+        "while time.monotonic()<deadline: time.sleep(0.1)\n"
     )
     child = subprocess.Popen(
         [__import__("sys").executable, "-c", child_program],
@@ -75,7 +88,7 @@ if (
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    marker = pathlib.Path(os.environ["AGGREGATE_DESCENDANT_PID"])
+    marker = runtime / "descendant.pid"
     deadline = time.monotonic() + 2
     while not marker.is_file() and time.monotonic() < deadline:
         if child.poll() is not None:
@@ -85,41 +98,41 @@ if (
         child.kill()
         child.wait()
         raise SystemExit(20)
-if (
-    os.environ.get("FAKE_AGGREGATE_RESULT") == "nested-tool-hang"
-    and name == "run-sq.sh"
-):
-    runtime = pathlib.Path(os.environ["TEST_RUNTIME"])
-    tool_pid_path = os.environ["AGGREGATE_TOOL_PID"]
-    pathlib.Path(os.environ["AGGREGATE_RUNNER_PID"]).write_text(str(os.getpid()))
+if mode == "nested-tool-hang" and name == "run-sq.sh":
+    tool_pid_path = str(runtime / "cancel-tool.pid")
+    runtime.joinpath("cancel-runner.pid").write_text(str(os.getpid()))
     tool_program = (
         "import os,pathlib,signal,time; "
         "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
         f"pathlib.Path({tool_pid_path!r}).write_text(str(os.getpid())); "
-        "time.sleep(30)"
+        "time.sleep(5)"
     )
-    raise SystemExit(
-        subprocess.run(
-            [
-                __import__("sys").executable,
-                "-B",
-                str(pathlib.Path(__file__).with_name("sq_evidence_process.py")),
-                "tool",
-                str(runtime / "nested-tool.status"),
-                str(runtime / "nested-tool.stdout"),
-                str(runtime / "nested-tool.stderr"),
-                "--",
-                __import__("sys").executable,
-                "-c",
-                tool_program,
-            ],
-            check=False,
-        ).returncode
+    nested_status = runtime / "nested-tool.status"
+    completed = subprocess.run(
+        [
+            __import__("sys").executable,
+            "-B",
+            str(pathlib.Path(__file__).with_name("sq_evidence_process.py")),
+            "tool",
+            str(nested_status),
+            str(runtime / "nested-tool.stdout"),
+            str(runtime / "nested-tool.stderr"),
+            "--",
+            __import__("sys").executable,
+            "-c",
+            tool_program,
+        ],
+        check=False,
     )
-if os.environ.get("FAKE_AGGREGATE_RESULT") == "stdout-flood":
+    cleanup_receipt = pathlib.Path(f"{nested_status}.cleanup")
+    if cleanup_receipt.read_bytes() != b"io.nisavid.sacrysty.process-cleanup/v1\n":
+        raise SystemExit(21)
+    cleanup_receipt.unlink()
+    raise SystemExit(completed.returncode)
+if mode == "stdout-flood":
     __import__("sys").stdout.buffer.write(b"x" * (2 * 1024 * 1024))
     raise SystemExit(0)
-if os.environ.get("FAKE_AGGREGATE_RESULT") == "malformed":
+if mode == "malformed":
     print("not-json")
     raise SystemExit(0)
 if name == "run-sq.sh":
@@ -179,12 +192,110 @@ else:
         "production_values_policy": "forbidden",
         "rfc9980": "unsupported-capability-gated",
     }
-if os.environ.get("FAKE_AGGREGATE_RESULT") == "false-check":
+if mode == "false-check":
     result["checks"]["temporary_key_material_removed"] = False
 json.dump(result, __import__("sys").stdout)
 print()
-if os.environ.get("FAKE_AGGREGATE_RESULT") == "nonzero":
+if mode == "nonzero":
     raise SystemExit(7)
+"""
+
+
+ACTUAL_FAKE_TOOL = r"""#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import signal
+import sys
+import time
+
+runtime = pathlib.Path(__RUNTIME__)
+controls = runtime / "actual-controls"
+controls.mkdir(exist_ok=True)
+name = pathlib.Path(sys.argv[0]).name
+arguments = sys.argv[1:]
+def control(label, default):
+    path = controls / label
+    return path.read_text(encoding="ascii") if path.is_file() else default
+def runner_name():
+    joined = " ".join(arguments)
+    if "sacrysty-signing-profile." in joined:
+        return "run-signing-profile"
+    if "sacrysty-conformance." in joined:
+        return "run-sq"
+    return "version"
+runner = runner_name()
+with (runtime / "actual-tool.log").open("a", encoding="utf-8") as log:
+    log.write(json.dumps({"name": name, "runner": runner, "arguments": arguments}) + "\n")
+
+if name == "sq" and arguments == ["version"]:
+    print("sq value-free fixture 1")
+    raise SystemExit(0)
+if name == "sqv" and arguments == ["--version"]:
+    print("sqv value-free fixture 1")
+    raise SystemExit(0)
+
+joined = " " + " ".join(arguments) + " "
+target = control("target", "none")
+mode = control("mode", "normal")
+classical_generation = (
+    name == "sq"
+    and " key generate " in joined
+    and " mldsa65-ed25519 " not in joined
+)
+if runner == target and classical_generation:
+    if mode == "failure":
+        print("constructed ordinary tool failure", file=sys.stderr)
+        raise SystemExit(70)
+    if mode in {"hang-ignore", "hang-delay"}:
+        marker = runtime / f"{target}-{mode}.selected"
+        work = next(
+            (
+                pathlib.Path(arguments[index + 1]).parent
+                for index, value in enumerate(arguments[:-1])
+                if value in {"--output", "--rev-cert", "--signature-file"}
+            ),
+            pathlib.Path("."),
+        )
+        marker.write_text(
+            f"{os.getpid()}:{os.getpgrp()}:{work}", encoding="utf-8"
+        )
+        if mode == "hang-ignore":
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        else:
+            def delayed_stop(_number, _frame):
+                pathlib.Path(f"{marker}.term").write_text("observed\n")
+                time.sleep(0.15)
+                raise SystemExit(143)
+            signal.signal(signal.SIGTERM, delayed_stop)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            time.sleep(0.1)
+        raise SystemExit(75)
+
+if name == "sq" and " mldsa65-ed25519 " in joined:
+    print(
+        "Error: Unsupported public key algorithm: ML-DSA-65+Ed25519",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+if name == "sq":
+    for index, value in enumerate(arguments[:-1]):
+        if value in {"--output", "--rev-cert", "--signature-file"}:
+            pathlib.Path(arguments[index + 1]).write_bytes(
+                b"disposable value-free fake artifact\n"
+            )
+    raise SystemExit(0)
+
+negative = (
+    arguments[-1].endswith("tampered-message.bin")
+    or any(value.endswith("tampered-signature.sig") for value in arguments)
+    or any(value.endswith("other-cert.pgp") for value in arguments)
+)
+if negative:
+    print("constructed verification rejection", file=sys.stderr)
+    raise SystemExit(7)
+raise SystemExit(0)
 """
 
 
@@ -194,36 +305,27 @@ def write_executable(path: pathlib.Path, content: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
-def terminate_group_if_alive(process_group: int) -> None:
-    if process_group == os.getpgrp():
-        raise AssertionError("refusing to signal the test process group")
-    try:
-        os.killpg(process_group, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-
-
-def terminate_if_alive(pid: int) -> None:
-    try:
-        os.kill(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-
-
 def clean_aggregate_process(
     aggregate: subprocess.Popen[str], pid_paths: tuple[pathlib.Path, ...]
 ) -> None:
-    terminate_group_if_alive(aggregate.pid)
+    if aggregate.poll() is None:
+        aggregate.terminate()
+    try:
+        aggregate.communicate(timeout=4)
+    except subprocess.TimeoutExpired:
+        aggregate.kill()
+        aggregate.communicate(timeout=2)
     for pid_path in pid_paths:
         if not pid_path.is_file():
             continue
-        pid = int(pid_path.read_text())
-        try:
-            process_group = os.getpgid(pid)
-        except ProcessLookupError:
-            continue
-        terminate_group_if_alive(process_group)
-    aggregate.communicate(timeout=2)
+        pid = int(pid_path.read_text().split(":", 1)[0])
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.01)
 
 
 class AggregateConformanceTests(unittest.TestCase):
@@ -238,22 +340,16 @@ class AggregateConformanceTests(unittest.TestCase):
         self.fail(f"aggregate process survived: {pid}")
 
     def make_repository(self) -> tuple[pathlib.Path, dict[str, str]]:
-        temporary_directory = external_temporary_directory(
-            ROOT, prefix="sacrysty-aggregate-test-"
-        )
-        self.addCleanup(temporary_directory.cleanup)
-        test_root = pathlib.Path(temporary_directory.name)
-        repository = test_root / "repository"
-        runtime = test_root / "runtime"
-        (repository / "scripts").mkdir(parents=True)
-        (repository / "conformance").mkdir()
-        (runtime / "tmp").mkdir(parents=True)
-        (runtime / "home").mkdir()
-        shutil.copy2(AGGREGATE, repository / "scripts")
-        shutil.copy2(RESULT_CHECKER, repository / "conformance")
-        shutil.copy2(SHARED_HELPER, repository / "conformance")
-        shutil.copy2(STRICT_JSON_HELPER, repository / "conformance")
-        shutil.copy2(PROCESS_HELPER, repository / "conformance")
+        fixture = ConstructedRepository(ROOT, prefix="sacrysty-aggregate-test-")
+        self.addCleanup(fixture.cleanup)
+        self.constructed_repository = fixture
+        repository = fixture.repository
+        runtime = fixture.runtime
+        fixture.copy(AGGREGATE, "scripts/check-conformance.sh")
+        fixture.copy(RESULT_CHECKER, "conformance/check-probe-result.py")
+        fixture.copy(SHARED_HELPER, "conformance/sq-evidence-lib.sh")
+        fixture.copy(PROCESS_HELPER, "conformance/sq_evidence_process.py")
+        fixture.copy_tree(ROOT / "sacrysty_runtime", "sacrysty_runtime")
         write_executable(
             repository / "scripts/check-repository.sh", "#!/bin/sh\nexit 0\n"
         )
@@ -262,49 +358,117 @@ class AggregateConformanceTests(unittest.TestCase):
         (repository / "conformance/synthetic-checks.txt").write_text(
             "".join(f"conformance/{name}\n" for name in TEST_SYNTHETIC_CHECKS)
         )
+        probe_stub = PROBE_STUB.replace("__RUNTIME__", repr(str(runtime))).replace(
+            "__PROBE_LOG__", repr(str(runtime / "probe.log"))
+        )
         for name in ("run-sq.sh", "run-signing-profile.sh"):
-            write_executable(repository / "conformance" / name, PROBE_STUB)
+            write_executable(repository / "conformance" / name, probe_stub)
 
-        environment = {
-            "AGGREGATE_PROBE_LOG": str(runtime / "probe.log"),
-            "GIT_CONFIG_GLOBAL": str(runtime / "missing-global-gitconfig"),
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "HOME": str(runtime / "home"),
-            "LC_ALL": "C",
-            "PATH": os.environ["PATH"],
-            "SYNTHETIC_LOG": str(runtime / "synthetic.log"),
-            "TEST_RUNTIME": str(runtime),
-            "TMPDIR": str(runtime / "tmp"),
-        }
-        subprocess.run(
-            ["git", "init", "-q", str(repository)], check=True, env=environment
+        environment = fixture.environment
+        environment.update(
+            {
+                "AGGREGATE_PROBE_LOG": str(runtime / "probe.log"),
+                "SYNTHETIC_LOG": str(runtime / "synthetic.log"),
+            }
         )
-        subprocess.run(
-            ["git", "-C", str(repository), "config", "user.name", "Fixture"],
-            check=True,
-            env=environment,
+        fixture.commit()
+        return repository, environment
+
+    def make_actual_runner_repository(
+        self,
+    ) -> tuple[pathlib.Path, dict[str, str]]:
+        fixture = ConstructedRepository(
+            ROOT, prefix="sacrysty-actual-runner-aggregate-test-"
         )
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repository),
-                "config",
-                "user.email",
-                "fixture@example.invalid",
-            ],
-            check=True,
-            env=environment,
+        self.addCleanup(fixture.cleanup)
+        self.constructed_repository = fixture
+        repository = fixture.repository
+        runtime = fixture.runtime
+        for source, destination in (
+            (AGGREGATE, "scripts/check-conformance.sh"),
+            (RESULT_CHECKER, "conformance/check-probe-result.py"),
+            (SHARED_HELPER, "conformance/sq-evidence-lib.sh"),
+            (PROCESS_HELPER, "conformance/sq_evidence_process.py"),
+            (ROOT / "conformance/run-sq.sh", "conformance/run-sq.sh"),
+            (
+                ROOT / "conformance/run-signing-profile.sh",
+                "conformance/run-signing-profile.sh",
+            ),
+        ):
+            fixture.copy(source, destination)
+        fixture.copy_tree(ROOT / "sacrysty_runtime", "sacrysty_runtime")
+        fixture.write(
+            "fixtures/rfc9580/message.txt",
+            "Sacrysty value-free aggregate fixture.\n",
         )
-        subprocess.run(
-            ["git", "-C", str(repository), "add", "."], check=True, env=environment
+        fixture.write(
+            "fixtures/signing/message.bin",
+            b"Sacrysty value-free signing fixture.\n",
         )
-        subprocess.run(
-            ["git", "-C", str(repository), "commit", "-q", "-m", "fixture"],
-            check=True,
-            env=environment,
+        write_executable(
+            repository / "scripts/check-repository.sh", "#!/bin/sh\nexit 0\n"
+        )
+        for name in TEST_SYNTHETIC_CHECKS:
+            write_executable(repository / "conformance" / name, PYTHON_STUB)
+        (repository / "conformance/synthetic-checks.txt").write_text(
+            "".join(f"conformance/{name}\n" for name in TEST_SYNTHETIC_CHECKS)
+        )
+        fake_tool = ACTUAL_FAKE_TOOL.replace("__RUNTIME__", repr(str(runtime)))
+        for name in ("sq", "sqv"):
+            write_executable(repository / "fake-bin" / name, fake_tool)
+        fixture.commit()
+        environment = fixture.environment
+        environment.update(
+            {
+                "SQ": str(repository / "fake-bin/sq"),
+                "SQV": str(repository / "fake-bin/sqv"),
+                "SYNTHETIC_LOG": str(runtime / "synthetic.log"),
+            }
         )
         return repository, environment
+
+    def set_actual_control(
+        self, environment: dict[str, str], name: str, value: str
+    ) -> None:
+        control = pathlib.Path(environment["TEST_RUNTIME"]) / "actual-controls" / name
+        control.parent.mkdir(exist_ok=True)
+        control.write_text(value, encoding="ascii")
+
+    def start_aggregate(
+        self, repository: pathlib.Path, environment: dict[str, str]
+    ) -> subprocess.Popen[str]:
+        aggregate = subprocess.Popen(
+            ["bash", str(repository / "scripts/check-conformance.sh")],
+            cwd=repository,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=environment,
+            start_new_session=True,
+        )
+        self.addCleanup(clean_aggregate_process, aggregate, ())
+        return aggregate
+
+    def assert_no_disposable_runner_paths(self, environment: dict[str, str]) -> None:
+        temporary_root = pathlib.Path(environment["TMPDIR"])
+        for pattern in (
+            "sacrysty-conformance.*",
+            "sacrysty-signing-profile.*",
+            "sacrysty-conformance-results.*",
+        ):
+            self.assertEqual(list(temporary_root.glob(pattern)), [], pattern)
+
+    def read_selected_marker(
+        self, marker: pathlib.Path
+    ) -> tuple[int, int, pathlib.Path]:
+        pid, process_group, work = marker.read_text().split(":", 2)
+        return int(pid), int(process_group), pathlib.Path(work)
+
+    def set_mode(self, environment: dict[str, str], mode: str) -> None:
+        pathlib.Path(environment["TEST_RUNTIME"], "aggregate-mode").write_text(
+            mode, encoding="ascii"
+        )
 
     def run_aggregate(
         self,
@@ -325,7 +489,7 @@ class AggregateConformanceTests(unittest.TestCase):
         for mode in ("malformed", "false-check"):
             with self.subTest(mode):
                 repository, environment = self.make_repository()
-                environment["FAKE_AGGREGATE_RESULT"] = mode
+                self.set_mode(environment, mode)
 
                 result = self.run_aggregate(repository, environment)
 
@@ -366,7 +530,7 @@ exec "$REAL_GIT" "$@"
         self,
     ) -> None:
         repository, environment = self.make_repository()
-        environment["FAKE_AGGREGATE_RESULT"] = "nonzero"
+        self.set_mode(environment, "nonzero")
 
         result = self.run_aggregate(repository, environment)
 
@@ -376,7 +540,7 @@ exec "$REAL_GIT" "$@"
 
     def test_oversized_probe_result_fails_at_the_aggregate_bound(self) -> None:
         repository, environment = self.make_repository()
-        environment["FAKE_AGGREGATE_RESULT"] = "stdout-flood"
+        self.set_mode(environment, "stdout-flood")
 
         result = self.run_aggregate(repository, environment)
 
@@ -387,12 +551,7 @@ exec "$REAL_GIT" "$@"
     def test_aggregate_reaps_an_ordinary_same_group_runner_descendant(self) -> None:
         repository, environment = self.make_repository()
         pid_path = pathlib.Path(environment["TEST_RUNTIME"]) / "descendant.pid"
-        environment.update(
-            {
-                "AGGREGATE_DESCENDANT_PID": str(pid_path),
-                "FAKE_AGGREGATE_RESULT": "same-group-descendant",
-            }
-        )
+        self.set_mode(environment, "same-group-descendant")
 
         descendant: int | None = None
         descendant_group: int | None = None
@@ -400,10 +559,7 @@ exec "$REAL_GIT" "$@"
             result = self.run_aggregate(repository, environment)
         finally:
             if pid_path.is_file():
-                descendant, descendant_group = map(
-                    int, pid_path.read_text().split(":")
-                )
-                self.addCleanup(terminate_if_alive, descendant)
+                descendant, descendant_group = map(int, pid_path.read_text().split(":"))
         self.assertIsNotNone(descendant)
         self.assertIsNotNone(descendant_group)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -426,13 +582,7 @@ exec "$REAL_GIT" "$@"
         runtime = pathlib.Path(environment["TEST_RUNTIME"])
         runner_pid_path = runtime / "cancel-runner.pid"
         tool_pid_path = runtime / "cancel-tool.pid"
-        environment.update(
-            {
-                "AGGREGATE_RUNNER_PID": str(runner_pid_path),
-                "AGGREGATE_TOOL_PID": str(tool_pid_path),
-                "FAKE_AGGREGATE_RESULT": "nested-tool-hang",
-            }
-        )
+        self.set_mode(environment, "nested-tool-hang")
         aggregate = subprocess.Popen(
             ["bash", str(repository / "scripts/check-conformance.sh")],
             cwd=repository,
@@ -461,9 +611,10 @@ exec "$REAL_GIT" "$@"
         self.assertEqual(os.getpgid(tool_pid), tool_pid)
 
         if signal_group:
+            self.assertIsNone(aggregate.poll())
             os.killpg(aggregate.pid, requested_signal)
         else:
-            os.kill(aggregate.pid, requested_signal)
+            aggregate.send_signal(requested_signal)
         aggregate_stdout, aggregate_stderr = aggregate.communicate(timeout=5)
 
         self.assertNotEqual(aggregate.returncode, 0)
@@ -498,8 +649,7 @@ exec "$REAL_GIT" "$@"
         supervisor_pid_path = runtime / "startup-supervisor.pid"
         runner_pid_path = runtime / "startup-runner.pid"
         bash_environment = runtime / "startup-barrier.bash"
-        bash_environment.write_text(
-            r"""set -T
+        bash_environment.write_text(r"""set -T
 aggregate_startup_barrier() {
   if [[ $BASH_COMMAND == 'active_probe_supervisor=$!' \
     && ! -e $AGGREGATE_STARTUP_BARRIER_ONCE ]]; then
@@ -511,19 +661,16 @@ aggregate_startup_barrier() {
   fi
 }
 trap aggregate_startup_barrier DEBUG
-"""
-        )
+""")
         environment.update(
             {
-                "AGGREGATE_RUNNER_PID": str(runner_pid_path),
                 "AGGREGATE_STARTUP_BARRIER_ONCE": str(barrier_once),
                 "AGGREGATE_STARTUP_BARRIER_READY": str(barrier_ready),
                 "AGGREGATE_STARTUP_BARRIER_RELEASE": str(barrier_release),
-                "AGGREGATE_SUPERVISOR_PID": str(supervisor_pid_path),
                 "BASH_ENV": str(bash_environment),
-                "FAKE_AGGREGATE_RESULT": "startup-cancel-hang",
             }
         )
+        self.set_mode(environment, "startup-cancel-hang")
         aggregate = subprocess.Popen(
             ["bash", str(repository / "scripts/check-conformance.sh")],
             cwd=repository,
@@ -554,7 +701,7 @@ trap aggregate_startup_barrier DEBUG
         self.assertEqual(os.getpgid(supervisor_pid), aggregate.pid)
         self.assertEqual(os.getpgid(runner_pid), runner_pid)
 
-        os.kill(aggregate.pid, requested_signal)
+        aggregate.send_signal(requested_signal)
         barrier_release.touch()
         aggregate.wait(timeout=5)
 
@@ -571,6 +718,183 @@ trap aggregate_startup_barrier DEBUG
                 self.assert_startup_interruption_reaps_registered_probe(
                     requested_signal
                 )
+
+    def test_actual_runners_complete_and_remove_disposable_material(self) -> None:
+        repository, environment = self.make_actual_runner_repository()
+
+        result = self.run_aggregate(repository, environment)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        observations = {
+            json.loads(line)["runner"]
+            for line in pathlib.Path(environment["TEST_RUNTIME"], "actual-tool.log")
+            .read_text()
+            .splitlines()
+        }
+        self.assertIn("run-sq", observations)
+        self.assertIn("run-signing-profile", observations)
+        self.assertIn("complete conformance checks passed", result.stdout)
+        self.assert_no_disposable_runner_paths(environment)
+
+    def test_actual_runner_failures_still_remove_disposable_material(self) -> None:
+        for target in ("run-sq", "run-signing-profile"):
+            with self.subTest(target):
+                repository, environment = self.make_actual_runner_repository()
+                self.set_actual_control(environment, "target", target)
+                self.set_actual_control(environment, "mode", "failure")
+
+                result = self.run_aggregate(repository, environment)
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    "classical key generation exited with status 70", result.stderr
+                )
+                self.assertNotIn("complete conformance checks passed", result.stdout)
+                self.assert_no_disposable_runner_paths(environment)
+
+    def assert_actual_runner_cancellation(
+        self,
+        target: str,
+        mode: str,
+        *,
+        startup_occurrence: int | None = None,
+    ) -> None:
+        repository, environment = self.make_actual_runner_repository()
+        runtime = pathlib.Path(environment["TEST_RUNTIME"])
+        marker = runtime / f"{target}-{mode}.selected"
+        self.set_actual_control(environment, "target", target)
+        self.set_actual_control(environment, "mode", mode)
+        release: pathlib.Path | None = None
+        if startup_occurrence is not None:
+            ready = runtime / "actual-startup.ready"
+            release = runtime / "actual-startup.release"
+            bash_environment = runtime / "actual-startup-barrier.bash"
+            bash_environment.write_text(
+                r"""set -T
+actual_probe_spawn_count=0
+actual_probe_startup_barrier() {
+  if [[ $BASH_COMMAND == 'active_probe_supervisor=$!' ]]; then
+    actual_probe_spawn_count=$((actual_probe_spawn_count + 1))
+    if (( actual_probe_spawn_count == AGGREGATE_STARTUP_OCCURRENCE )); then
+      : >"$AGGREGATE_STARTUP_READY"
+      while [[ ! -e $AGGREGATE_STARTUP_RELEASE ]]; do
+        sleep 0.01
+      done
+    fi
+  fi
+}
+trap actual_probe_startup_barrier DEBUG
+""",
+                encoding="utf-8",
+            )
+            environment.update(
+                {
+                    "AGGREGATE_STARTUP_OCCURRENCE": str(startup_occurrence),
+                    "AGGREGATE_STARTUP_READY": str(ready),
+                    "AGGREGATE_STARTUP_RELEASE": str(release),
+                    "BASH_ENV": str(bash_environment),
+                }
+            )
+        aggregate = self.start_aggregate(repository, environment)
+        deadline = time.monotonic() + 10
+        while not marker.is_file() and time.monotonic() < deadline:
+            if aggregate.poll() is not None:
+                break
+            time.sleep(0.01)
+        self.assertTrue(marker.is_file(), f"{target} selected tool did not start")
+        if startup_occurrence is not None:
+            ready = runtime / "actual-startup.ready"
+            self.assertTrue(
+                ready.is_file(), "aggregate startup barrier was not reached"
+            )
+        selected_pid, selected_group, work = self.read_selected_marker(marker)
+        self.assertEqual(selected_pid, selected_group)
+        self.assertTrue(work.is_dir())
+
+        aggregate.send_signal(signal.SIGTERM)
+        if release is not None:
+            release.touch()
+        aggregate_stdout, aggregate_stderr = aggregate.communicate(timeout=10)
+
+        self.assertEqual(aggregate.returncode, 143, aggregate_stderr)
+        self.assertNotIn("complete conformance checks passed", aggregate_stdout)
+        self.assert_process_gone(selected_pid)
+        self.assertFalse(work.exists())
+        if mode == "hang-delay":
+            self.assertTrue(pathlib.Path(f"{marker}.term").is_file())
+        self.assert_no_disposable_runner_paths(environment)
+
+    def test_actual_runner_startup_registration_cancellation_is_owned(self) -> None:
+        for target, occurrence in (
+            ("run-sq", 1),
+            ("run-signing-profile", 2),
+        ):
+            with self.subTest(target):
+                self.assert_actual_runner_cancellation(
+                    target, "hang-ignore", startup_occurrence=occurrence
+                )
+
+    def test_actual_runner_operational_cancellation_allows_nested_cleanup(
+        self,
+    ) -> None:
+        for target in ("run-sq", "run-signing-profile"):
+            for mode in ("hang-delay", "hang-ignore"):
+                with self.subTest(target=target, mode=mode):
+                    self.assert_actual_runner_cancellation(target, mode)
+
+    def test_missing_runner_receipt_fails_and_retains_result_storage(self) -> None:
+        repository, environment = self.make_repository()
+        self.set_mode(environment, "missing-runner-receipt")
+
+        result = self.run_aggregate(repository, environment)
+
+        self.assertNotEqual(result.returncode, 0)
+        retained = list(
+            pathlib.Path(environment["TMPDIR"]).glob("sacrysty-conformance-results.*")
+        )
+        self.assertEqual(len(retained), 1)
+        self.assertIn("cleanup receipt is unavailable", result.stderr)
+        self.assertIn("result directory retained", result.stderr)
+
+    def test_interruption_after_probe_reap_never_signals_the_saved_pid(self) -> None:
+        repository, environment = self.make_repository()
+        runtime = pathlib.Path(environment["TEST_RUNTIME"])
+        once = runtime / "post-wait.once"
+        signal_log = runtime / "post-wait-signals.log"
+        bash_environment = runtime / "post-wait-barrier.bash"
+        bash_environment.write_text(
+            r"""set -T
+aggregate_post_wait_barrier() {
+  if [[ $BASH_COMMAND == 'active_probe_supervisor=' \
+    && -n ${active_probe_supervisor:-} \
+    && ! -e $AGGREGATE_POST_WAIT_ONCE ]]; then
+    : >"$AGGREGATE_POST_WAIT_ONCE"
+    builtin kill -s TERM "$$"
+  fi
+}
+kill() {
+  printf '%s\n' "$*" >>"$AGGREGATE_POST_WAIT_SIGNAL_LOG"
+  return 0
+}
+trap aggregate_post_wait_barrier DEBUG
+""",
+            encoding="utf-8",
+        )
+        environment.update(
+            {
+                "AGGREGATE_POST_WAIT_ONCE": str(once),
+                "AGGREGATE_POST_WAIT_SIGNAL_LOG": str(signal_log),
+                "BASH_ENV": str(bash_environment),
+            }
+        )
+
+        result = self.run_aggregate(repository, environment)
+
+        attempts = signal_log.read_text().splitlines() if signal_log.exists() else []
+        self.assertTrue(once.is_file(), "aggregate did not reach post-wait barrier")
+        self.assertEqual(attempts, [])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("complete conformance checks passed", result.stdout)
 
     def test_complete_aggregate_runs_synthetic_checks_in_both_modes(self) -> None:
         repository, environment = self.make_repository()

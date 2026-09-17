@@ -6,16 +6,20 @@ from __future__ import annotations
 import hashlib
 import pathlib
 import subprocess
+import sys
 
-from strict_json import (
+ROOT = pathlib.Path(__file__).parents[1]
+sys.path.insert(0, str(ROOT))
+
+from sacrysty_runtime.strict_json import (
     DuplicateMemberError,
     InvalidJsonSyntaxError,
     InvalidUtf8Error,
     NonFiniteNumberError,
+    UnrepresentableNumberError,
     decode_strict_json,
 )
 
-ROOT = pathlib.Path(__file__).parents[1]
 INVENTORY = ROOT / "docs/provenance/genesis-source-inventory.json"
 PRODUCERS = {
     "cad9c98aa2a122368e31f4ab14aeff4e6c95a6cf": 12,
@@ -66,6 +70,8 @@ def _load_inventory() -> dict[str, object]:
             else "non-finite inventory number"
         )
         raise InventoryError(f"{label}: {exc.value}") from exc
+    except UnrepresentableNumberError as exc:
+        raise InventoryError(f"unrepresentable inventory number: {exc.value}") from exc
     except (InvalidUtf8Error, InvalidJsonSyntaxError) as exc:
         raise InventoryError("source inventory is not readable strict JSON") from exc
     if not isinstance(value, dict):

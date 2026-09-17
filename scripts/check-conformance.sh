@@ -26,28 +26,33 @@ fi
 source_revision=$(git rev-parse HEAD)
 temporary_root=$(sq_evidence_external_tmp_root "$root")
 result_directory=$(mktemp -d "$temporary_root/sacrysty-conformance-results.XXXXXX")
+result_directory_removal_permitted=1
 cleanup_results() {
   if [[ -n ${result_directory:-} ]]; then
-    sq_evidence_remove_and_verify \
-      "$result_directory" 'temporary conformance-result directory'
+    if [[ -n ${result_directory_removal_permitted:-} ]]; then
+      sq_evidence_remove_and_verify \
+        "$result_directory" 'temporary conformance-result directory'
+    else
+      printf 'temporary conformance-result directory retained: %s\n' \
+        "$result_directory" >&2
+      return 1
+    fi
   fi
 }
 trap cleanup_results EXIT
 
 active_probe_supervisor=
-active_probe_supervisor_starting=
-active_probe_supervisor_signal_sent=
+active_probe_cancellation_marker=
+active_probe_cancellation_requested=
 aggregate_interrupted_status=
 aggregate_signal_failure=
-signal_active_probe_supervisor() {
-  if [[ -n $active_probe_supervisor_signal_sent ]]; then
+request_active_probe_cancellation() {
+  if [[ -n $active_probe_cancellation_requested ]]; then
     return
   fi
-  active_probe_supervisor_signal_sent=1
-  # Bash starts the asynchronous helper with SIGINT ignored. Use the helper's
-  # handled termination signal for both caller interruption paths.
-  if ! kill -s TERM "$active_probe_supervisor"; then
-    printf 'aggregate could not signal its active probe supervisor\n' >&2
+  active_probe_cancellation_requested=1
+  if ! : >"$active_probe_cancellation_marker"; then
+    printf 'aggregate could not record probe cancellation\n' >&2
     aggregate_signal_failure=1
   fi
 }
@@ -57,14 +62,11 @@ interrupt_aggregate() {
     return
   fi
   aggregate_interrupted_status=$interrupted_status
-  if [[ -n $active_probe_supervisor_starting ]]; then
-    return
-  fi
-  if [[ -z $active_probe_supervisor ]]; then
+  if [[ -z $active_probe_cancellation_marker ]]; then
     trap - INT TERM
     exit "$aggregate_interrupted_status"
   fi
-  signal_active_probe_supervisor
+  request_active_probe_cancellation
 }
 trap 'interrupt_aggregate 130' INT
 trap 'interrupt_aggregate 143' TERM
@@ -94,16 +96,17 @@ run_and_admit_probe() {
   local output=$3
   local runner_stderr="${output}.stderr"
   local runner_status_file="${output}.status"
+  local cleanup_receipt="${runner_status_file}.cleanup"
   local runner_status
   local supervisor_status
-  active_probe_supervisor_starting=1
-  active_probe_supervisor_signal_sent=
+  active_probe_cancellation_marker="${runner_status_file}.cancel"
+  active_probe_cancellation_requested=
+  result_directory_removal_permitted=
   python3 -B "$SQ_EVIDENCE_PROCESS_HELPER" \
     probe "$runner_status_file" "$output" "$runner_stderr" -- "$runner" &
   active_probe_supervisor=$!
-  active_probe_supervisor_starting=
   if [[ -n $aggregate_interrupted_status ]]; then
-    signal_active_probe_supervisor
+    request_active_probe_cancellation
   fi
   if wait "$active_probe_supervisor"; then
     supervisor_status=0
@@ -113,9 +116,18 @@ run_and_admit_probe() {
   if [[ -n $aggregate_interrupted_status ]]; then
     # A trapped signal interrupts wait before the helper necessarily exits.
     # Re-wait so its process-group and nested-session cleanup completes first.
+    trap '' INT TERM
     wait "$active_probe_supervisor" || :
+    trap 'interrupt_aggregate 130' INT
+    trap 'interrupt_aggregate 143' TERM
   fi
   active_probe_supervisor=
+  if sq_evidence_consume_process_cleanup_receipt "$cleanup_receipt"; then
+    result_directory_removal_permitted=1
+  else
+    aggregate_signal_failure=1
+  fi
+  active_probe_cancellation_marker=
   if [[ -s $runner_stderr ]]; then
     cat "$runner_stderr" >&2
   fi
