@@ -13,12 +13,6 @@ This procedure changes contribution enforcement only. It grants no release,
 deployment, provider, host, ceremony, custody, or adopter authority. Only the
 repository coordinator may change the installation or repository settings.
 
-For the current migration, the selected installer is blocked by its
-approval-review gate. Authorized source preparation and publication may
-proceed, but installation, protection mutation, and merging remain blocked
-until that gate clears. The qualification and required-check ordering below
-remain unchanged.
-
 ## Routine state
 
 - GitHub App `DCO`, app ID `1861`, is installed for the exact intended
