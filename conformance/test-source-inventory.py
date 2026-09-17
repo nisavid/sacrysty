@@ -46,7 +46,9 @@ class SourceInventoryTests(unittest.TestCase):
         command.extend([str(ROOT), str(destination)])
         subprocess.run(command, check=True)
         shutil.copy2(CHECKER, destination / "conformance")
-        shutil.copytree(RUNTIME_SUPPORT, destination / "sacrysty_runtime")
+        shutil.copytree(
+            RUNTIME_SUPPORT, destination / "sacrysty_runtime", dirs_exist_ok=True
+        )
         return destination
 
     def test_checked_in_inventory_matches_full_git_object_history(self) -> None:
