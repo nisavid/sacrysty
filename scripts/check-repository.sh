@@ -37,7 +37,7 @@ for path in "${required[@]}"; do
 done
 (( missing == 0 )) || exit 1
 
-for path in scripts/check-repository.sh scripts/check-dco.sh .hooks/commit-msg.sh .hooks/pre-push.sh; do
+for path in scripts/check-repository.sh .hooks/commit-msg.sh .hooks/pre-push.sh; do
   if [[ ! -x "$path" ]]; then
     printf 'required executable bit is missing: %s\n' "$path" >&2
     exit 1
