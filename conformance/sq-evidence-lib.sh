@@ -118,7 +118,8 @@ PY
 
 sq_evidence_confirm_active_process_cleanup() {
   if [[ -z $SQ_EVIDENCE_ACTIVE_PROCESS_RECEIPT ]]; then
-    return
+    # A trap-owned no-op is success, independent of the status saved on entry.
+    return 0
   fi
   sq_evidence_consume_process_cleanup_receipt \
     "$SQ_EVIDENCE_ACTIVE_PROCESS_RECEIPT" || return 1
@@ -127,7 +128,7 @@ sq_evidence_confirm_active_process_cleanup() {
 
 sq_evidence_await_active_process_cleanup() {
   if [[ -z $SQ_EVIDENCE_ACTIVE_PROCESS_RECEIPT ]]; then
-    return
+    return 0
   fi
   if ! python3 -B - \
     "$SQ_EVIDENCE_ACTIVE_PROCESS_RECEIPT" \
@@ -170,7 +171,7 @@ sq_evidence_write_runner_cleanup_receipt() {
   local previous_umask
   local receipt_parent
   if [[ -z $receipt ]]; then
-    return
+    return 0
   fi
   sq_evidence_trace_runner_phase receipt-write-entered
   if [[ -e $receipt || -z ${TMPDIR:-} ]]; then
