@@ -7,7 +7,9 @@ umask 077
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 source "$root/conformance/sq-evidence-lib.sh"
 work=
+sq_evidence_trace_runner_phase runner-sourced
 cleanup_work() {
+  sq_evidence_trace_runner_phase cleanup-entered
   if [[ -n ${work:-} ]]; then
     sq_evidence_finish_runner_cleanup \
       "$work" 'temporary signing-profile directory'
@@ -19,7 +21,9 @@ cleanup_work() {
 # shellcheck disable=SC2329 # Invoked by the ERR trap below.
 fail_runner() {
   local status=$1
+  sq_evidence_trace_runner_phase "error-handler-${status}"
   if ((BASH_SUBSHELL > 0)); then
+    sq_evidence_trace_runner_phase error-handler-deferred
     return "$status"
   fi
   sq_evidence_exit_runner \
@@ -27,12 +31,14 @@ fail_runner() {
 }
 # shellcheck disable=SC2329 # Invoked by the TERM trap below.
 interrupt_runner() {
+  sq_evidence_trace_runner_phase term-handler
   sq_evidence_exit_runner \
     143 "${work:-}" 'temporary signing-profile directory' 1
 }
 trap cleanup_work EXIT
 trap 'fail_runner $?' ERR
 trap interrupt_runner TERM
+sq_evidence_trace_runner_phase handlers-registered
 
 sq_bin=${SQ:-sq}
 sqv_bin=${SQV:-sqv}

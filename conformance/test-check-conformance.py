@@ -467,6 +467,19 @@ builtin trap suppress_runner_exit_fallback DEBUG
         )
         environment["PATH"] = f"{wrapper.parent}{os.pathsep}{environment['PATH']}"
 
+    def suppress_runner_finalization(self, environment: dict[str, str]) -> None:
+        """Construct missing cleanup so its bounded lifecycle trace is observable."""
+
+        self.suppress_runner_exit_fallback(environment)
+        hook = pathlib.Path(
+            environment["TEST_RUNTIME"], "suppress-runner-exit-fallback.bash"
+        )
+        content = hook.read_text(encoding="utf-8")
+        hook.write_text(
+            content.replace("builtin trap - EXIT", "builtin trap - ERR EXIT"),
+            encoding="utf-8",
+        )
+
     def start_aggregate(
         self, repository: pathlib.Path, environment: dict[str, str]
     ) -> subprocess.Popen[str]:
@@ -483,14 +496,17 @@ builtin trap suppress_runner_exit_fallback DEBUG
         self.addCleanup(clean_aggregate_process, aggregate, ())
         return aggregate
 
-    def assert_no_disposable_runner_paths(self, environment: dict[str, str]) -> None:
+    def assert_no_disposable_runner_paths(
+        self, environment: dict[str, str], diagnostic: str = ""
+    ) -> None:
         temporary_root = pathlib.Path(environment["TMPDIR"])
         for pattern in (
             "sacrysty-conformance.*",
             "sacrysty-signing-profile.*",
             "sacrysty-conformance-results.*",
         ):
-            self.assertEqual(list(temporary_root.glob(pattern)), [], pattern)
+            message = f"{pattern}\n{diagnostic}" if diagnostic else pattern
+            self.assertEqual(list(temporary_root.glob(pattern)), [], message)
 
     def read_selected_marker(
         self, marker: pathlib.Path
@@ -783,7 +799,32 @@ trap aggregate_startup_barrier DEBUG
                     "classical key generation exited with status 70", result.stderr
                 )
                 self.assertNotIn("complete conformance checks passed", result.stdout)
-                self.assert_no_disposable_runner_paths(environment)
+                self.assert_no_disposable_runner_paths(environment, result.stderr)
+
+    def test_missing_actual_runner_cleanup_reports_bounded_lifecycle(self) -> None:
+        repository, environment = self.make_actual_runner_repository()
+        self.suppress_runner_finalization(environment)
+        environment["SQ"] = str(
+            pathlib.Path(environment["TEST_RUNTIME"]) / "missing-sq"
+        )
+
+        result = self.run_aggregate(repository, environment)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("runner cleanup receipt is unavailable", result.stderr)
+        self.assertRegex(
+            result.stderr,
+            r"runner lifecycle: helper-runtime python=\d+\.\d+\.\d+ "
+            r"platform=[a-z0-9]+ pid=\d+ \| "
+            r"runner-phase=runner-sourced bash=[^ ]+ pid=\d+ shell=\d+ "
+            r"subshell=0 \| .*runner-phase=handlers-registered ",
+        )
+        self.assertNotIn("runner-phase=error-handler-", result.stderr)
+        self.assertNotIn("complete conformance checks passed", result.stdout)
+        lifecycle = next(
+            line for line in result.stderr.splitlines() if "runner lifecycle:" in line
+        )
+        print(f"native lifecycle diagnostic control: {lifecycle}")
 
     def assert_actual_runner_cancellation(
         self,

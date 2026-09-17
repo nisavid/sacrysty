@@ -813,13 +813,30 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 stdout=root / "missing.stdout",
                 stderr=root / "missing.stderr",
             )
+            missing_script = (
+                "import os, pathlib\n"
+                "receipt = os.environ['SACRYSTY_RUNNER_CLEANUP_RECEIPT']\n"
+                "trace = pathlib.Path(f'{receipt}.trace')\n"
+                "with trace.open('a', encoding='ascii') as stream:\n"
+                "    stream.write(\n"
+                "        f'runner-phase=constructed-no-receipt bash=fixture '"
+                "        f'pid={os.getpid()} shell={os.getpid()} subshell=0\\n'\n"
+                "    )\n"
+            )
             with self.assertRaisesRegex(
                 process_boundary.ProcessBoundaryError,
                 "runner cleanup receipt is unavailable",
-            ):
+            ) as raised:
                 process_boundary.run_process(
-                    "probe", missing_outputs, [sys.executable, "-c", "pass"]
+                    "probe", missing_outputs, [sys.executable, "-c", missing_script]
                 )
+            self.assertRegex(
+                str(raised.exception),
+                r"runner lifecycle: helper-runtime python=\d+\.\d+\.\d+ "
+                r"platform=[a-z0-9]+ pid=\d+ \| "
+                r"runner-phase=constructed-no-receipt bash=fixture "
+                r"pid=\d+ shell=\d+ subshell=0",
+            )
             self.assertFalse(missing_outputs.status.exists())
             self.assertFalse(
                 process_boundary.CleanupReceipt.for_status(
@@ -848,11 +865,37 @@ class SqEvidenceProcessTests(unittest.TestCase):
             self.assertFalse(
                 pathlib.Path(f"{receipt_outputs.status}.runner-cleanup").exists()
             )
+            self.assertFalse(
+                pathlib.Path(f"{receipt_outputs.status}.runner-cleanup.trace").exists()
+            )
             self.assertEqual(
                 process_boundary.CleanupReceipt.for_status(
                     receipt_outputs.status
                 ).path.read_bytes(),
                 process_boundary.PROCESS_CLEANUP_RECEIPT,
+            )
+
+            hostile_outputs = process_boundary.ProcessOutputPaths(
+                status=root / "hostile.status",
+                stdout=root / "hostile.stdout",
+                stderr=root / "hostile.stderr",
+            )
+            hostile_script = (
+                "import os, pathlib\n"
+                "receipt = os.environ['SACRYSTY_RUNNER_CLEANUP_RECEIPT']\n"
+                "trace = pathlib.Path(f'{receipt}.trace')\n"
+                "with trace.open('ab') as stream:\n"
+                "    stream.write(b'caller-content-must-not-be-emitted' * 256)\n"
+            )
+            with self.assertRaisesRegex(
+                process_boundary.ProcessBoundaryError,
+                "trace-invalid-line-2.*trace-exceeded-bound",
+            ) as hostile:
+                process_boundary.run_process(
+                    "probe", hostile_outputs, [sys.executable, "-c", hostile_script]
+                )
+            self.assertNotIn(
+                "caller-content-must-not-be-emitted", str(hostile.exception)
             )
 
     def test_selected_process_environment_is_explicit_and_value_free(self) -> None:

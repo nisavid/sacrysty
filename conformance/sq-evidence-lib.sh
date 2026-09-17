@@ -18,6 +18,28 @@ SQ_EVIDENCE_RUNNER_CLEANUP_RECEIPT='io.nisavid.sacrysty.runner-cleanup/v1'
 SQ_EVIDENCE_ACTIVE_PROCESS_RECEIPT=
 SQ_EVIDENCE_INNER_CLEANUP_WAIT_SECONDS=2.75
 
+sq_evidence_trace_runner_phase() {
+  local phase=$1
+  local receipt=${SACRYSTY_RUNNER_CLEANUP_RECEIPT:-}
+  local runner_pid=${BASHPID:-$$}
+  local runner_subshell=${BASH_SUBSHELL:-0}
+  local trace
+  if [[ -z $receipt || ! $phase =~ ^[a-z0-9-]+$ ]]; then
+    return 0
+  fi
+  trace="${receipt}.trace"
+  if [[ ! -f $trace || -L $trace ]]; then
+    return 0
+  fi
+  if ! printf \
+    'runner-phase=%s bash=%s pid=%s shell=%s subshell=%s\n' \
+    "$phase" "$BASH_VERSION" "$runner_pid" "$$" "$runner_subshell" \
+    >>"$trace" 2>/dev/null; then
+    :
+  fi
+  return 0
+}
+
 sq_evidence_require_tools() {
   command -v "$1" >/dev/null
   command -v "$2" >/dev/null
@@ -150,6 +172,7 @@ sq_evidence_write_runner_cleanup_receipt() {
   if [[ -z $receipt ]]; then
     return
   fi
+  sq_evidence_trace_runner_phase receipt-write-entered
   if [[ -e $receipt || -z ${TMPDIR:-} ]]; then
     printf 'runner cleanup receipt path is invalid\n' >&2
     return 1
@@ -179,13 +202,17 @@ sq_evidence_write_runner_cleanup_receipt() {
   if [[ -z $noclobber_was_set ]]; then
     set +o noclobber
   fi
+  sq_evidence_trace_runner_phase receipt-written
 }
 
 sq_evidence_finish_runner_cleanup() {
   local path=$1
   local label=$2
+  sq_evidence_trace_runner_phase finish-entered
   sq_evidence_confirm_active_process_cleanup || return 1
+  sq_evidence_trace_runner_phase selected-cleanup-confirmed
   sq_evidence_remove_and_verify "$path" "$label" || return 1
+  sq_evidence_trace_runner_phase temporary-material-removed
   sq_evidence_write_runner_cleanup_receipt
 }
 
@@ -196,13 +223,18 @@ sq_evidence_exit_runner() {
   local await_active_cleanup=$4
   local final_status=$requested_status
 
+  sq_evidence_trace_runner_phase "owned-finalizer-${requested_status}"
   # Error and signal paths own mandatory finalization directly. EXIT remains a
   # fallback for shell failures that do not reach either catchable path.
   trap - ERR EXIT
   trap '' INT TERM
-  if [[ $await_active_cleanup == 1 ]] &&
-    ! sq_evidence_await_active_process_cleanup; then
-    final_status=1
+  if [[ $await_active_cleanup == 1 ]]; then
+    if sq_evidence_await_active_process_cleanup; then
+      sq_evidence_trace_runner_phase selected-cleanup-awaited
+    else
+      sq_evidence_trace_runner_phase selected-cleanup-await-failed
+      final_status=1
+    fi
   fi
   if [[ -n $path ]]; then
     if ! sq_evidence_finish_runner_cleanup "$path" "$label"; then
@@ -212,6 +244,7 @@ sq_evidence_exit_runner() {
     ! sq_evidence_write_runner_cleanup_receipt; then
     final_status=1
   fi
+  sq_evidence_trace_runner_phase "owned-finalizer-exit-${final_status}"
   exit "$final_status"
 }
 

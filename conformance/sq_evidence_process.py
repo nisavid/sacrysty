@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import re
 import selectors
 import signal
 import stat
@@ -34,6 +35,14 @@ INNER_CLEANUP_SECONDS = 0.25 + 2 * KILL_GRACE_SECONDS
 OUTER_COOPERATIVE_MARGIN_SECONDS = 1.0
 PROCESS_CLEANUP_RECEIPT = b"io.nisavid.sacrysty.process-cleanup/v1\n"
 RUNNER_CLEANUP_RECEIPT = b"io.nisavid.sacrysty.runner-cleanup/v1\n"
+RUNNER_TRACE_LIMIT_BYTES = 4096
+_HELPER_RUNTIME_TRACE = re.compile(
+    rb"helper-runtime python=\d+\.\d+\.\d+ platform=[a-z0-9_-]+ pid=\d+"
+)
+_RUNNER_PHASE_TRACE = re.compile(
+    rb"runner-phase=[a-z0-9-]+ bash=[A-Za-z0-9()._+~-]+ "
+    rb"pid=\d+ shell=\d+ subshell=\d+"
+)
 
 
 @dataclass(frozen=True)
@@ -87,6 +96,59 @@ class CleanupReceipt:
 
 def _runner_receipt_path(status_path: pathlib.Path) -> pathlib.Path:
     return pathlib.Path(f"{status_path}.runner-cleanup")
+
+
+def _runner_trace_path(status_path: pathlib.Path) -> pathlib.Path:
+    return pathlib.Path(f"{_runner_receipt_path(status_path)}.trace")
+
+
+def _initialize_runner_trace(path: pathlib.Path) -> None:
+    version = ".".join(str(part) for part in sys.version_info[:3])
+    content = (
+        f"helper-runtime python={version} platform={sys.platform} pid={os.getpid()}\n"
+    ).encode("ascii")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags, 0o600)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content)
+    except OSError:
+        # Diagnostics must not weaken or replace the cleanup receipt contract.
+        return
+
+
+def _runner_lifecycle_diagnostic(path: pathlib.Path) -> str:
+    try:
+        with path.open("rb") as stream:
+            content = stream.read(RUNNER_TRACE_LIMIT_BYTES + 1)
+    except OSError:
+        return "runner lifecycle trace is unavailable"
+
+    exceeded = len(content) > RUNNER_TRACE_LIMIT_BYTES
+    if exceeded:
+        content = content[:RUNNER_TRACE_LIMIT_BYTES]
+    lines = content.splitlines()
+    accepted: list[str] = []
+    for index, line in enumerate(lines):
+        expected = _HELPER_RUNTIME_TRACE if index == 0 else _RUNNER_PHASE_TRACE
+        if expected.fullmatch(line) is None:
+            accepted.append(f"trace-invalid-line-{index + 1}")
+            break
+        accepted.append(line.decode("ascii"))
+    if not accepted:
+        accepted.append("trace-empty")
+    if exceeded:
+        accepted.append("trace-exceeded-bound")
+    return f"runner lifecycle: {' | '.join(accepted)}"
+
+
+def _discard_runner_trace(path: pathlib.Path) -> None:
+    try:
+        path.unlink()
+    except OSError:
+        pass
 
 
 def _cancellation_marker_path(status_path: pathlib.Path) -> pathlib.Path:
@@ -320,6 +382,7 @@ def run_process(
     paths = output_paths.all()
     cleanup_receipt = CleanupReceipt.for_status(output_paths.status)
     runner_receipt = _runner_receipt_path(output_paths.status)
+    runner_trace = _runner_trace_path(output_paths.status)
     if len({path.resolve() for path in paths}) != len(paths):
         raise ProcessBoundaryError("selected process output paths must be distinct")
     output_parents = {path.parent.resolve() for path in paths}
@@ -327,9 +390,13 @@ def run_process(
         raise ProcessBoundaryError("selected process outputs must share a directory")
     output_directory = output_parents.pop()
     reserved_paths = (*paths, cleanup_receipt.path, runner_receipt)
+    if mode == "probe":
+        reserved_paths = (*reserved_paths, runner_trace)
     if any(path.exists() for path in reserved_paths):
         raise ProcessBoundaryError("selected process output path already exists")
     selected_environment = _selected_environment(mode, output_paths)
+    if mode == "probe":
+        _initialize_runner_trace(runner_trace)
     serialized_environment = json.dumps(
         selected_environment,
         ensure_ascii=True,
@@ -361,7 +428,12 @@ def run_process(
         if process is not None and not cleanup_complete:
             raise ProcessBoundaryError("process cleanup was not confirmed")
         if mode == "probe" and process is not None and process.returncode != 125:
-            _consume_runner_receipt(runner_receipt)
+            try:
+                _consume_runner_receipt(runner_receipt)
+            except ProcessBoundaryError as exc:
+                diagnostic = _runner_lifecycle_diagnostic(runner_trace)
+                raise ProcessBoundaryError(f"{exc}; {diagnostic}") from exc
+            _discard_runner_trace(runner_trace)
         cleanup_receipt.write()
 
     try:
