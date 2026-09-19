@@ -11,7 +11,7 @@ test_source_identity_rejection() {
     return 1
   fi
   grep -F \
-    'source revision mismatch: expected d421a7a08b6e0973e60b54a3796a9c62642f7615' \
+    'source revision mismatch: expected 45e1e8ca1388ddf029671460fd6e649d29289c1b' \
     "$output_file" >/dev/null
 }
 
@@ -49,20 +49,31 @@ test_imported_dependency_digest_rejection() {
   TMPDIR="$disposable_root" \
     bash "$runner" "$controlled_source" "$control_result" "$(uname -m)"
 
-  printf '\n' >>"$controlled_source/conformance/strict_json.py"
-  if TMPDIR="$disposable_root" \
-    bash "$runner" "$controlled_source" "$mismatch_result" "$(uname -m)" \
-    >"$output_file" 2>&1; then
-    printf 'expected a changed imported dependency to be rejected\n' >&2
-    return 1
-  fi
-  grep -F \
-    'source digest mismatch for conformance/strict_json.py:' \
-    "$output_file" >/dev/null
-  if [[ -e $mismatch_result ]]; then
-    printf 'dependency mismatch must be rejected before checker execution\n' >&2
-    return 1
-  fi
+  local dependency
+  for dependency in \
+    adapters/fido_custody.py \
+    adapters/fido-custody-v1.md \
+    conformance/check-fido-custody.py \
+    conformance/test_support.py \
+    sacrysty_runtime/__init__.py \
+    sacrysty_runtime/process_groups.py \
+    sacrysty_runtime/strict_json.py; do
+    printf '\n' >>"$controlled_source/$dependency"
+    if TMPDIR="$disposable_root" \
+      bash "$runner" "$controlled_source" "$mismatch_result" "$(uname -m)" \
+      >"$output_file" 2>&1; then
+      printf 'expected a changed imported dependency to be rejected\n' >&2
+      return 1
+    fi
+    grep -F \
+      "source digest mismatch for $dependency:" \
+      "$output_file" >/dev/null
+    if [[ -e $mismatch_result ]]; then
+      printf 'dependency mismatch must be rejected before checker execution\n' >&2
+      return 1
+    fi
+    cp "$source_root/$dependency" "$controlled_source/$dependency"
+  done
 }
 
 test_result_links_do_not_mutate_source() {
@@ -70,7 +81,7 @@ test_result_links_do_not_mutate_source() {
   local result_directory="$scratch_directory/linked-result-output"
   local disposable_root="$scratch_directory/linked-result-tmp"
   local symlink_result="$result_directory/symlink-result.json"
-  local symlink_target="$controlled_source/conformance/strict_json.py"
+  local symlink_target="$controlled_source/sacrysty_runtime/strict_json.py"
   local hardlink_result="$result_directory/hardlink-result.json"
   local hardlink_target="$controlled_source/conformance/test_support.py"
 
@@ -84,7 +95,7 @@ test_result_links_do_not_mutate_source() {
     printf 'result writing followed an existing symlink\n' >&2
     return 1
   fi
-  if ! cmp -s "$source_root/conformance/strict_json.py" "$symlink_target"; then
+  if ! cmp -s "$source_root/sacrysty_runtime/strict_json.py" "$symlink_target"; then
     printf 'result writing modified a symlinked source file\n' >&2
     return 1
   fi
@@ -136,15 +147,26 @@ workflow_path = pathlib.Path(sys.argv[2])
 source_root = pathlib.Path(sys.argv[3])
 result = json.loads(result_path.read_text(encoding="utf-8"))
 expected_workflow_digest = hashlib.sha256(workflow_path.read_bytes()).hexdigest()
-strict_json_path = source_root / "conformance/strict_json.py"
-expected_strict_json_digest = hashlib.sha256(strict_json_path.read_bytes()).hexdigest()
+expected_inputs = {
+    "adapters/fido_custody.py",
+    "adapters/fido-custody-v1.md",
+    "conformance/check-fido-custody.py",
+    "conformance/test_support.py",
+    "sacrysty_runtime/__init__.py",
+    "sacrysty_runtime/process_groups.py",
+    "sacrysty_runtime/strict_json.py",
+}
+assert set(result["source"]["sha256"]) == expected_inputs
+for relative_path in expected_inputs:
+    expected_digest = hashlib.sha256((source_root / relative_path).read_bytes()).hexdigest()
+    assert result["source"]["sha256"][relative_path] == expected_digest
+assert result["source"]["revision"] == "45e1e8ca1388ddf029671460fd6e649d29289c1b"
 assert result["outcome"] == "passed"
 assert result["candidate_bound"] is True
 assert result["provisional"] is True
 assert result["checks"] == {"normal_exit": 0, "optimized_exit": 0}
 assert result["source"]["clean_before"] is True
 assert result["source"]["clean_after"] is True
-assert result["source"]["sha256"]["conformance/strict_json.py"] == expected_strict_json_digest
 assert result["workflow"]["file_sha256"] == expected_workflow_digest
 assert result["runner"]["observed_architecture"] == result["runner"]["expected_architecture"]
 assert result["python"]["implementation"]

@@ -26,7 +26,7 @@ workflow, source, runtime, exits, and limits that the run actually observed.
 ## Current source layer
 
 The current workflow freezes synthetic source revision
-[`d421a7a08b6e0973e60b54a3796a9c62642f7615`](https://github.com/nisavid/sacrysty/commit/d421a7a08b6e0973e60b54a3796a9c62642f7615).
+[`45e1e8ca1388ddf029671460fd6e649d29289c1b`](https://github.com/nisavid/sacrysty/commit/45e1e8ca1388ddf029671460fd6e649d29289c1b).
 The runner verifies the exact bytes of the current direct-FIDO runtime closure
 before execution:
 
@@ -34,7 +34,9 @@ before execution:
 - `adapters/fido-custody-v1.md`
 - `conformance/check-fido-custody.py`
 - `conformance/test_support.py`
-- `conformance/strict_json.py`
+- `sacrysty_runtime/__init__.py`
+- `sacrysty_runtime/process_groups.py`
+- `sacrysty_runtime/strict_json.py`
 
 The expected SHA-256 values live in the runner and are copied into each emitted
 result. They are not repeated here so this entrypoint cannot become a competing
@@ -55,10 +57,17 @@ layer; they do not rewrite that historical evidence or turn its preparation
 receipts into workflow inputs.
 
 The current source is a published candidate, not accepted genesis. A passing
-job is only a provisional observation of its bound tuple. The latest
-[whole-increment review](https://github.com/nisavid/sacrysty/pull/21#issuecomment-5695643645)
-requires source-owner corrections before acceptance; passing Linux or macOS
-jobs do not clear those findings.
+job is only a provisional observation of its bound tuple. The [source handoff](https://github.com/nisavid/sacrysty/pull/20#issuecomment-5743053390)
+binds the corrected source, clean source reviews, and its validation evidence.
+Qualification requires fresh hosted runs and whole-increment review of this
+runner and workflow bound to that source; source validation does not supply
+those downstream results.
+
+The maintained [genesis validation procedure](https://github.com/nisavid/sacrysty/blob/45e1e8ca1388ddf029671460fd6e649d29289c1b/docs/agents/genesis-validation.md)
+owns full source validation. This qualification runner invokes only the direct
+synthetic custody checker against its separately frozen input set. The checker
+uses the native C compiler to build a disposable environment-observation
+fixture; that fixture is not the separately required immutable real worker.
 
 ## Invalidation and reconciliation
 
@@ -67,7 +76,7 @@ runtime closure, the workflow, runner, behavioral harness, Python runtime,
 platform, architecture, or runner image invalidates the affected result. A
 source correction requires the direct runtime closure to be established again,
 all changed identities to be rebound, fresh hosted evidence, and review of the
-same final tuple. The five paths above must not be assumed to remain the closure
+same final tuple. The seven paths above must not be assumed to remain the closure
 of a later source.
 
 ## Limits

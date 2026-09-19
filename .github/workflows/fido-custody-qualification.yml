@@ -54,7 +54,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: nisavid/sacrysty
-          ref: d421a7a08b6e0973e60b54a3796a9c62642f7615
+          ref: 45e1e8ca1388ddf029671460fd6e649d29289c1b
           path: frozen-synthetic-source
           persist-credentials: false
 

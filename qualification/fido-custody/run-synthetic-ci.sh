@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly expected_source_revision=d421a7a08b6e0973e60b54a3796a9c62642f7615
+readonly expected_source_revision=45e1e8ca1388ddf029671460fd6e649d29289c1b
 readonly expected_public_inputs_manifest=4fa2c5ba1f9795c9c6fb63f11e342702e6e22cd3225d94ad8dd4a8130685a574
 readonly expected_primary_sources_manifest=7d20b934f9c5acda27e914336db0e01eed8693bf5253e8f42104f3df75214e8e
 
@@ -63,16 +63,20 @@ main() {
     exit 1
   fi
 
-  verify_digest adapters/fido_custody.py \
-    ce04b4dc1c11ccf88bfd87418cf7e8d5387cb9d537cce756611a525c818fd89f
   verify_digest adapters/fido-custody-v1.md \
-    9d037a6ef9b84eaddf103cd05c9fc5bc336a5d393bcd0dc57fb01387c51a3c4d
+    3a2a8c4262c1a1876a596f9032b71bf9c7f4e08bb786c8eb980c8d691f71ad3c
+  verify_digest adapters/fido_custody.py \
+    06e3f7a4bb2b6f8b601d376bf64fc780c8cdbd78cd8b74c8bcb43e19c4330892
   verify_digest conformance/check-fido-custody.py \
-    b0d78ef686118bef1ff7c8322752d701fdbd66aea80596e8629915730412ef37
+    432713aaaa77c44f6aeb414e291147eb593d0112ea6876a295a9a04953d3159a
   verify_digest conformance/test_support.py \
-    45ff4ac487816dbe76652bf81f38ebd3caae89b1fd59ea16a3a094e8649ab067
-  verify_digest conformance/strict_json.py \
-    505557305f5cd7033f3a082952b917275cc04cea643c7a709306fc461675b4ac
+    53f8a6c30422031342ed47215ac5d9b91c0f1ab8d55defc306fdeb28e3cd1692
+  verify_digest sacrysty_runtime/__init__.py \
+    9a544524cda604a26f6451e1f81c14450d6e027487c5b6ee02401dfd24b8acf0
+  verify_digest sacrysty_runtime/process_groups.py \
+    024fe15f456e884b0be14060b2b08dc1a7873eecbf3a2257a9b0e86a105a4662
+  verify_digest sacrysty_runtime/strict_json.py \
+    6ac33fd9ea97c03b5a0dcb24a62cab599dc6fbf58703f343f96c48e3d526d79e
 
   source_status_before=$(git -C "$source_root" status --porcelain=v1 --untracked-files=all)
   if [[ -n $source_status_before ]]; then
@@ -219,11 +223,13 @@ record = {
         "clean_before": True,
         "clean_after": clean_after,
         "sha256": {
-            "adapters/fido_custody.py": "ce04b4dc1c11ccf88bfd87418cf7e8d5387cb9d537cce756611a525c818fd89f",
-            "adapters/fido-custody-v1.md": "9d037a6ef9b84eaddf103cd05c9fc5bc336a5d393bcd0dc57fb01387c51a3c4d",
-            "conformance/check-fido-custody.py": "b0d78ef686118bef1ff7c8322752d701fdbd66aea80596e8629915730412ef37",
-            "conformance/test_support.py": "45ff4ac487816dbe76652bf81f38ebd3caae89b1fd59ea16a3a094e8649ab067",
-            "conformance/strict_json.py": "505557305f5cd7033f3a082952b917275cc04cea643c7a709306fc461675b4ac",
+            "adapters/fido-custody-v1.md": "3a2a8c4262c1a1876a596f9032b71bf9c7f4e08bb786c8eb980c8d691f71ad3c",
+            "adapters/fido_custody.py": "06e3f7a4bb2b6f8b601d376bf64fc780c8cdbd78cd8b74c8bcb43e19c4330892",
+            "conformance/check-fido-custody.py": "432713aaaa77c44f6aeb414e291147eb593d0112ea6876a295a9a04953d3159a",
+            "conformance/test_support.py": "53f8a6c30422031342ed47215ac5d9b91c0f1ab8d55defc306fdeb28e3cd1692",
+            "sacrysty_runtime/__init__.py": "9a544524cda604a26f6451e1f81c14450d6e027487c5b6ee02401dfd24b8acf0",
+            "sacrysty_runtime/process_groups.py": "024fe15f456e884b0be14060b2b08dc1a7873eecbf3a2257a9b0e86a105a4662",
+            "sacrysty_runtime/strict_json.py": "6ac33fd9ea97c03b5a0dcb24a62cab599dc6fbf58703f343f96c48e3d526d79e",
         },
     },
     "preparation_receipts": {
