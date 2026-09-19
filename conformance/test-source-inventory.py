@@ -12,18 +12,56 @@ import subprocess
 import sys
 import unittest
 
-from test_support import external_temporary_directory
+from test_support import ConstructedRepository, external_temporary_directory
 
 ROOT = pathlib.Path(__file__).parents[1]
 CHECKER = ROOT / "conformance/check-source-inventory.py"
 RUNTIME_SUPPORT = ROOT / "sacrysty_runtime"
 INVENTORY = ROOT / "docs/provenance/genesis-source-inventory.json"
+BUNDLE = ROOT / "docs/provenance/genesis-sources.bundle"
 
 
 class SourceInventoryTests(unittest.TestCase):
+    def test_squashed_shallow_checkout_verifies_without_producer_history(self) -> None:
+        fixture = ConstructedRepository(ROOT, prefix="sacrysty-source-squash-test-")
+        self.addCleanup(fixture.cleanup)
+        fixture.write("README", "Value-free base.\n")
+        fixture.commit()
+        fixture.copy(CHECKER, "conformance/check-source-inventory.py")
+        fixture.copy(ROOT / "conformance/test_support.py", "conformance/test_support.py")
+        fixture.copy_tree(RUNTIME_SUPPORT, "sacrysty_runtime")
+        fixture.copy(INVENTORY, str(INVENTORY.relative_to(ROOT)))
+        fixture.copy(BUNDLE, str(BUNDLE.relative_to(ROOT)))
+        fixture.commit(message="squashed source candidate")
+        checkout = fixture.runtime / "shallow"
+        subprocess.run(
+            [
+                "git", "clone", "-q", "--depth=1", "--no-local",
+                str(fixture.repository), str(checkout),
+            ],
+            check=True,
+            env=fixture.environment,
+        )
+        missing = subprocess.run(
+            [
+                "git", "-C", str(checkout), "cat-file", "-e",
+                "cad9c98aa2a122368e31f4ab14aeff4e6c95a6cf",
+            ],
+            capture_output=True,
+            check=False,
+            env=fixture.environment,
+        )
+        self.assertNotEqual(missing.returncode, 0)
+
+        result = self.run_checker(checkout)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("35 path entries across 4 producers", result.stdout)
+
     def run_checker(self, repository: pathlib.Path) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [sys.executable, "-B", "conformance/check-source-inventory.py"],
+            [sys.executable, *(["-O"] if sys.flags.optimize else []),
+             "-B", "conformance/check-source-inventory.py"],
             cwd=repository,
             check=False,
             capture_output=True,
@@ -37,21 +75,19 @@ class SourceInventoryTests(unittest.TestCase):
             },
         )
 
-    def clone_with_checker(
-        self, destination: pathlib.Path, *, shallow: bool = False
-    ) -> pathlib.Path:
+    def clone_with_checker(self, destination: pathlib.Path) -> pathlib.Path:
         command = ["git", "clone", "-q", "--no-hardlinks"]
-        if shallow:
-            command.extend(["--depth=1", "--no-local"])
         command.extend([str(ROOT), str(destination)])
         subprocess.run(command, check=True)
         shutil.copy2(CHECKER, destination / "conformance")
+        shutil.copy2(ROOT / "conformance/test_support.py", destination / "conformance")
+        shutil.copy2(BUNDLE, destination / BUNDLE.relative_to(ROOT))
         shutil.copytree(
             RUNTIME_SUPPORT, destination / "sacrysty_runtime", dirs_exist_ok=True
         )
         return destination
 
-    def test_checked_in_inventory_matches_full_git_object_history(self) -> None:
+    def test_checked_in_inventory_matches_retained_producer_objects(self) -> None:
         result = self.run_checker(ROOT)
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -93,18 +129,27 @@ class SourceInventoryTests(unittest.TestCase):
                     result = self.run_checker(repository)
                     self.assertNotEqual(result.returncode, 0)
 
-    def test_shallow_history_is_rejected_instead_of_skipping_provenance(self) -> None:
+    def test_missing_or_damaged_bundle_fails_despite_available_git_history(self) -> None:
         with external_temporary_directory(
-            ROOT, prefix="sacrysty-source-inventory-shallow-test-"
+            ROOT, prefix="sacrysty-source-inventory-bundle-test-"
         ) as directory:
-            repository = self.clone_with_checker(
-                pathlib.Path(directory) / "repository", shallow=True
-            )
-
-            result = self.run_checker(repository)
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("complete Git history", result.stderr)
+            repository = self.clone_with_checker(pathlib.Path(directory) / "repository")
+            bundle = repository / BUNDLE.relative_to(ROOT)
+            original = bundle.read_bytes()
+            for label, value in (
+                ("missing", None),
+                ("truncated", original[:-1]),
+                ("changed", original[:-1] + bytes([original[-1] ^ 1])),
+                ("extended", original + b"x"),
+            ):
+                with self.subTest(label):
+                    if value is None:
+                        bundle.unlink()
+                    else:
+                        bundle.write_bytes(value)
+                    result = self.run_checker(repository)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("source bundle", result.stderr)
 
 
 if __name__ == "__main__":

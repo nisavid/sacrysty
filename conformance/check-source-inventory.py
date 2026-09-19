@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Verify genesis producer provenance directly from complete Git object history."""
+"""Verify immutable producer objects from the repository-carried source bundle."""
 
 from __future__ import annotations
 
 import hashlib
+import os
 import pathlib
 import subprocess
 import sys
@@ -19,6 +20,11 @@ from sacrysty_runtime.strict_json import (
     UnrepresentableNumberError,
     decode_strict_json,
 )
+from test_support import external_temporary_directory
+
+BUNDLE = ROOT / "docs/provenance/genesis-sources.bundle"
+BUNDLE_BYTES = 61436
+BUNDLE_SHA256 = "2ad3bdfdac795e880f4fe28e74ae3593a1b0f4141b7ca921d55c148a06c893b0"
 
 INVENTORY = ROOT / "docs/provenance/genesis-source-inventory.json"
 PRODUCERS = {
@@ -41,15 +47,26 @@ ENTRY_FIELDS = {
 
 
 class InventoryError(ValueError):
-    """The source receipt cannot be proven from the local Git objects."""
+    """The source receipt cannot be proven from the retained producer objects."""
 
 
-def _git(*arguments: str) -> bytes:
+def _git_environment() -> dict[str, str]:
+    return {
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "HOME": os.devnull,
+        "LC_ALL": "C",
+        "PATH": os.environ["PATH"],
+    }
+
+
+def _git(repository: pathlib.Path, *arguments: str) -> bytes:
     try:
         return subprocess.run(
-            ["git", "-C", str(ROOT), *arguments],
+            ["git", "--no-replace-objects", "-C", str(repository), *arguments],
             check=True,
             capture_output=True,
+            env=_git_environment(),
         ).stdout
     except subprocess.CalledProcessError as exc:
         command = " ".join(arguments[:2])
@@ -94,26 +111,27 @@ def _load_inventory() -> dict[str, object]:
     return value
 
 
-def _require_complete_history() -> None:
-    if _git("rev-parse", "--is-shallow-repository").strip() != b"false":
+def _require_complete_history(repository: pathlib.Path) -> None:
+    if _git(repository, "rev-parse", "--is-shallow-repository").strip() != b"false":
         raise InventoryError("complete Git history is required for source provenance")
-    object_listing = _git("rev-list", "--objects", "--all", "--missing=print")
+    object_listing = _git(repository, "rev-list", "--objects", "--all", "--missing=print")
     if any(line.startswith(b"?") for line in object_listing.splitlines()):
         raise InventoryError("complete Git objects are required for source provenance")
-    _git("fsck", "--full", "--no-dangling", "--no-reflogs")
+    _git(repository, "fsck", "--full", "--no-dangling", "--no-reflogs")
 
 
-def _commit_identity(commit: str) -> tuple[str, str]:
-    _git("cat-file", "-e", f"{commit}^{{commit}}")
-    commit_line = _git("rev-list", "--parents", "-n", "1", commit).decode().split()
+def _commit_identity(repository: pathlib.Path, commit: str) -> tuple[str, str]:
+    _git(repository, "cat-file", "-e", f"{commit}^{{commit}}")
+    commit_line = _git(repository, "rev-list", "--parents", "-n", "1", commit).decode().split()
     if len(commit_line) != 2 or commit_line[0] != commit:
         raise InventoryError(f"producer does not have one exact parent: {commit}")
-    tree = _git("rev-parse", f"{commit}^{{tree}}").decode().strip()
+    tree = _git(repository, "rev-parse", f"{commit}^{{tree}}").decode().strip()
     return commit_line[1], tree
 
 
-def _changed_paths(parent: str, commit: str) -> set[str]:
+def _changed_paths(repository: pathlib.Path, parent: str, commit: str) -> set[str]:
     fields = _git(
+        repository,
         "diff-tree",
         "--no-commit-id",
         "--name-status",
@@ -142,8 +160,8 @@ def _changed_paths(parent: str, commit: str) -> set[str]:
     return paths
 
 
-def _tree_entry(commit: str, path: str) -> tuple[str, str, bytes]:
-    output = _git("ls-tree", "-z", commit, "--", path)
+def _tree_entry(repository: pathlib.Path, commit: str, path: str) -> tuple[str, str, bytes]:
+    output = _git(repository, "ls-tree", "-z", commit, "--", path)
     records = [record for record in output.split(b"\0") if record]
     if len(records) != 1 or b"\t" not in records[0]:
         raise InventoryError(f"producer path has no unique tree entry: {path}")
@@ -155,7 +173,7 @@ def _tree_entry(commit: str, path: str) -> tuple[str, str, bytes]:
         raise InventoryError(f"unparseable producer tree entry: {path}") from exc
     if actual_path != path or object_type != "blob":
         raise InventoryError(f"producer tree entry is not the expected blob: {path}")
-    return mode, oid, _git("cat-file", "blob", oid)
+    return mode, oid, _git(repository, "cat-file", "blob", oid)
 
 
 def _entry_string(entry: dict[str, object], field: str) -> str:
@@ -165,9 +183,10 @@ def _entry_string(entry: dict[str, object], field: str) -> str:
     return value
 
 
-def check_inventory() -> tuple[int, int]:
-    inventory = _load_inventory()
-    _require_complete_history()
+def _check_inventory(
+    repository: pathlib.Path, inventory: dict[str, object]
+) -> tuple[int, int]:
+    _require_complete_history(repository)
     entries = inventory["entries"]
     if not isinstance(entries, list):
         raise InventoryError("source inventory entries are not an array")
@@ -196,21 +215,10 @@ def check_inventory() -> tuple[int, int]:
         identities.add(identity)
         grouped[commit].append(entry)
 
-    head = _git("rev-parse", "HEAD").decode().strip()
     exact_total = 0
     for commit, producer_entries in grouped.items():
-        parent, tree = _commit_identity(commit)
-        try:
-            subprocess.run(
-                ["git", "-C", str(ROOT), "merge-base", "--is-ancestor", commit, head],
-                check=True,
-                capture_output=True,
-            )
-        except subprocess.CalledProcessError as exc:
-            raise InventoryError(
-                f"producer is not an ancestor of the candidate: {commit}"
-            ) from exc
-        changed_paths = _changed_paths(parent, commit)
+        parent, tree = _commit_identity(repository, commit)
+        changed_paths = _changed_paths(repository, parent, commit)
         manifest_paths = {_entry_string(entry, "path") for entry in producer_entries}
         if manifest_paths != changed_paths or len(producer_entries) != len(
             changed_paths
@@ -224,7 +232,7 @@ def check_inventory() -> tuple[int, int]:
                 raise InventoryError(f"producer parent mismatch: {commit}:{path}")
             if _entry_string(entry, "tree_sha") != tree:
                 raise InventoryError(f"producer tree mismatch: {commit}:{path}")
-            mode, oid, blob = _tree_entry(commit, path)
+            mode, oid, blob = _tree_entry(repository, commit, path)
             if _entry_string(entry, "git_file_mode") != mode:
                 raise InventoryError(f"producer file mode mismatch: {commit}:{path}")
             if _entry_string(entry, "blob_oid") != oid:
@@ -242,6 +250,47 @@ def check_inventory() -> tuple[int, int]:
     if exact_total != inventory["item_count"]:
         raise InventoryError("exact producer path count mismatch")
     return exact_total, len(grouped)
+
+
+def check_inventory() -> tuple[int, int]:
+    inventory = _load_inventory()
+    try:
+        with BUNDLE.open("rb") as source:
+            bundle_bytes = source.read(BUNDLE_BYTES + 1)
+    except OSError as exc:
+        raise InventoryError("source bundle is unavailable") from exc
+    if (
+        len(bundle_bytes) != BUNDLE_BYTES
+        or hashlib.sha256(bundle_bytes).hexdigest() != BUNDLE_SHA256
+    ):
+        raise InventoryError("source bundle identity mismatch")
+
+    with external_temporary_directory(ROOT, prefix="sacrysty-source-inventory-") as root:
+        temporary_root = pathlib.Path(root)
+        # Import the exact verified bytes, independent of later source-file changes.
+        frozen_bundle = temporary_root / "sources.bundle"
+        frozen_bundle.write_bytes(bundle_bytes)
+        repository = temporary_root / "objects.git"
+        try:
+            subprocess.run(
+                [
+                    "git", "clone", "--quiet", "--bare", "--no-local", "--template=",
+                    str(frozen_bundle), str(repository),
+                ],
+                check=True,
+                capture_output=True,
+                env=_git_environment(),
+            )
+        except subprocess.CalledProcessError as exc:
+            raise InventoryError("source bundle cannot supply its complete objects") from exc
+        expected_refs = {
+            f"{commit} refs/heads/producer-{issue}"
+            for commit, issue in PRODUCERS.items()
+        }
+        actual_refs = set(_git(repository, "show-ref").decode().splitlines())
+        if actual_refs != expected_refs:
+            raise InventoryError("source bundle producer references mismatch")
+        return _check_inventory(repository, inventory)
 
 
 def main() -> None:

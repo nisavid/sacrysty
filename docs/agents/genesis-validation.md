@@ -13,12 +13,25 @@ for the candidate. The owning issue controls acceptance of the complete genesis.
 3. Verify each source commit and its changed paths. Record copied, translated,
    retained, and superseded inputs. A closed issue or available Git object does
    not prove that its source is integrated or that its review covers the candidate.
-   Require complete history, then run `conformance/check-source-inventory.py` to
-   compare every producer path with the commit, parent, tree, mode, blob bytes,
-   byte length, and SHA-256 recorded in the source inventory. A shallow clone or
-   missing object is a failure, not a skipped provenance check.
+   Run `conformance/check-source-inventory.py` to verify the retained source
+   bundle and compare every producer path with the commit, parent, tree, mode,
+   blob bytes, byte length, and SHA-256 recorded in the source inventory. Keep
+   the bundle with the candidate; a shallow checkout is supported. Missing or
+   altered bundled evidence is a failure. The checker imports only into external
+   temporary storage and leaves the candidate's Git objects and refs untouched.
 4. Compare the candidate's claimed behavior with the accepted contracts. Keep
    undefined schemas and operational behavior with their owning decisions.
+
+## Merge and downstream consumption
+
+Use the repository's permitted merge method. Before merging an integration
+change, exercise source-inventory conformance and its regressions on a clean
+checkout of the proposed merged tree with only the target branch's history.
+After merge, identify the actual published commit and tree, verify the tree
+against the reviewed candidate, and run the same checks from a fresh shallow
+checkout. Retain the new command results with that published commit; earlier
+receipts keep their original commit identities. Consumers bind their evidence
+to the revision they actually test.
 
 ## Check the candidate
 
@@ -201,7 +214,7 @@ publish its absolute paths or raw logs without reviewing them first.
 
 The conformance entrypoint checks repository policy and whitespace; runs
 public-record and synthetic custody checks; runs the crypto-runner and process
-regressions; checks the full-history source inventory; then runs probe-result,
+regressions; checks the bundled-source inventory; then runs probe-result,
 strict-JSON, aggregate-result, and genesis-procedure regressions. Each pre-probe
 Python check runs in normal and optimized mode. Complete mode then runs both
 disposable crypto-tool probes.

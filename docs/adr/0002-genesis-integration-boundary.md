@@ -19,6 +19,16 @@ revisions, but this candidate neither defines nor restates their wire semantics.
 operator's current decision for the first executable release-conformance
 increment; no outcome is selected here.
 
+Imported source provenance records the owning decision and immutable producer
+revision. A standalone Git bundle retains the original producer objects and
+complete history needed to verify the source inventory. Candidate ancestry is
+independent: squash and rebase merges preserve this evidence as ordinary
+tracked bytes. The checker verifies the pinned bundle and its exact source
+identities in external disposable storage. It does not execute historical
+source or infer approval, correct integration, or operational authority from
+object identity. Evidence consumers bind their results to the published
+revision they actually test.
+
 The candidate's public-record check validates envelope structure and the
 accepted inert-extension rules. It does not validate record-family bodies or
 consume them operationally. Its baseline consumer understands no required

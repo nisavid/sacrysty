@@ -8,8 +8,8 @@ identifies their origins; acceptance of the complete genesis belongs to
 | --- | --- | --- | --- |
 | Rust library and native build checks | [Single-package library skeleton](https://github.com/nisavid/sacrysty/issues/6#issuecomment-5569532765) | `4934e821e04f8a7d5740086a19fdb66a73e6a0dc` | Retained through the base history. |
 | Repository security and quality controls | [GitHub controls](https://github.com/nisavid/sacrysty/issues/8#issuecomment-5574014764) | `a96c715ebc593999fe9f0f5a0b0a94e453826178` | Retained through the base history; live configuration is separate from source. |
-| Public-record envelope, ADR, and fixtures | [Public domain model](https://github.com/nisavid/sacrysty/issues/14#issuecomment-5626182792) | `b7b23d92fa9d1535683f7417051ebb2c886c1d28` | Producer commit retained as an ancestor; checker corrected and shared entrypoints reconciled. |
-| Crypto-conformance profile and probe | [Crypto conformance](https://github.com/nisavid/sacrysty/issues/12#issuecomment-5626207980) | `cad9c98aa2a122368e31f4ab14aeff4e6c95a6cf` | Producer commit retained as an ancestor; probe corrected and shared entrypoints reconciled. |
+| Public-record envelope, ADR, and fixtures | [Public domain model](https://github.com/nisavid/sacrysty/issues/14#issuecomment-5626182792) | `b7b23d92fa9d1535683f7417051ebb2c886c1d28` | Original producer objects retained in the source bundle; checker corrected and shared entrypoints reconciled. |
+| Crypto-conformance profile and probe | [Crypto conformance](https://github.com/nisavid/sacrysty/issues/12#issuecomment-5626207980) | `cad9c98aa2a122368e31f4ab14aeff4e6c95a6cf` | Original producer objects retained in the source bundle; probe corrected and shared entrypoints reconciled. |
 | Synthetic one-shot custody adapter | [FIDO adapter](https://github.com/nisavid/sacrysty/issues/15#issuecomment-5654982477) | `2579e8011e298a8863ae4a6ee439d5faf2e037b7` | Retained from the merged adapter PR. |
 | Signing profile and disposable probe | [Signing profile](https://github.com/nisavid/sacrysty/issues/13#issuecomment-5654982348) | `5a4332f7c2801df808fee58e7997cdb3ed9c855d` | Retained from the merged signing-profile PR and used as the integration base. |
 
@@ -28,6 +28,26 @@ binds the original path and mode to its commit, parent, tree, blob, byte length,
 and SHA-256. Repeated paths identify distinct producer versions. These are
 source identities, not qualification results or hashes of the integrated files.
 
+The [source bundle](genesis-sources.bundle) carries the four original producer
+commits and their complete reachable objects under `refs/heads/producer-12`,
+`producer-13`, `producer-14`, and `producer-15`. It is a standalone Git bundle,
+61,436 bytes, with SHA-256
+`2ad3bdfdac795e880f4fe28e74ae3593a1b0f4141b7ca921d55c148a06c893b0`.
+The checker pins that artifact, imports its verified bytes into a disposable
+bare repository, verifies its complete objects and exact producer refs, and
+compares all inventory entries against those objects. It never checks out or
+executes the historical source. The bundle includes historical public files
+needed to retain the original commit identities; those files are evidence,
+not the candidate's maintained implementation.
+
+Provenance verification depends on the bundle carried by the candidate, so it
+works after squash or rebase merges and from shallow checkouts. The candidate's
+ancestry is not part of this contract. Missing or altered evidence fails even
+when another local Git object database happens to contain the original source.
+The inventory proves source identity and recoverability, not source approval,
+integration correctness, or a signature-based trust claim. Review and tests
+must still cover the final integrated revision.
+
 The integrated tree retains the source fixtures, profiles, schema, and contracts,
 with an explicit clarification of the envelope check's limits. Shared README
 files and the ADR index describe the assembled candidate. The domain checker,
@@ -37,7 +57,7 @@ with focused regression cases. The retained signing-profile probe now shares
 the isolated-store, hashing, JSON, and verified-cleanup boundary with the crypto
 probe. The integration diff is the authoritative record of those translations.
 
-The new full-history inventory check, validation entrypoint, native CI
+The bundled-source inventory check, validation entrypoint, native CI
 invocation, and [consumer procedure](../agents/genesis-validation.md) exercise
 the assembled tree. They establish no additional product interface or
 operational authority.
