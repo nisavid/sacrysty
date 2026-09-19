@@ -80,6 +80,65 @@ class PublicRecordEnvelopeAdmissionTests(unittest.TestCase):
         with self.assertRaises(CHECKER.UnsupportedEnvelopeSchemaError):
             CHECKER.envelope_admissible(candidate, schema=schema)
 
+    def test_schema_audit_rejects_constraints_without_supported_types(self) -> None:
+        cases = []
+
+        typeless_root = copy.deepcopy(CHECKER.ENVELOPE_SCHEMA)
+        typeless_root.pop("type")
+        cases.append(("root object keywords", {}, typeless_root))
+
+        typeless_nested = copy.deepcopy(CHECKER.ENVELOPE_SCHEMA)
+        typeless_nested["$defs"]["extension"].pop("type")
+        cases.append(("nested object keywords", CANONICAL, typeless_nested))
+
+        typeless_pattern = copy.deepcopy(CHECKER.ENVELOPE_SCHEMA)
+        typeless_pattern["properties"]["publisher"].pop("type")
+        cases.append(("string pattern", CANONICAL, typeless_pattern))
+
+        for label, record, schema in cases:
+            with self.subTest(label), self.assertRaises(
+                CHECKER.UnsupportedEnvelopeSchemaError
+            ):
+                CHECKER.envelope_admissible(
+                    copy.deepcopy(record), schema=copy.deepcopy(schema)
+                )
+
+    def test_schema_audit_eagerly_rejects_invalid_references(self) -> None:
+        cases = {
+            "unresolved": {"$ref": "#/$defs/missing"},
+            "cycle": {"$ref": "#/$defs/cycle"},
+            "unsupported pointer": {"$ref": "#/properties/body"},
+        }
+        for label, unused_definition in cases.items():
+            with self.subTest(label):
+                schema = copy.deepcopy(CHECKER.ENVELOPE_SCHEMA)
+                schema["$defs"][
+                    "cycle" if label == "cycle" else "unused"
+                ] = unused_definition
+                with self.assertRaises(CHECKER.UnsupportedEnvelopeSchemaError):
+                    CHECKER.envelope_admissible(copy.deepcopy(CANONICAL), schema=schema)
+
+    def test_schema_audit_rejects_non_string_const_and_enum_values(self) -> None:
+        integer_const = copy.deepcopy(CHECKER.ENVELOPE_SCHEMA)
+        integer_const["properties"]["schema_version"]["const"] = 1
+        boolean_for_integer_const = copy.deepcopy(CANONICAL)
+        boolean_for_integer_const["schema_version"] = True
+
+        integer_enum = copy.deepcopy(CHECKER.ENVELOPE_SCHEMA)
+        integer_enum["properties"]["record_type"].pop("type")
+        integer_enum["properties"]["record_type"]["enum"] = [1]
+        boolean_for_integer_enum = copy.deepcopy(CANONICAL)
+        boolean_for_integer_enum["record_type"] = True
+
+        for label, record, schema in (
+            ("const", boolean_for_integer_const, integer_const),
+            ("enum", boolean_for_integer_enum, integer_enum),
+        ):
+            with self.subTest(label), self.assertRaises(
+                CHECKER.UnsupportedEnvelopeSchemaError
+            ):
+                CHECKER.envelope_admissible(record, schema=schema)
+
     def test_required_envelope_fields_cannot_be_omitted(self) -> None:
         for field in (
             "record_type",

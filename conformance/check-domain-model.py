@@ -74,9 +74,23 @@ _ENVELOPE_SCHEMA_KEYS = {
     "title",
     "type",
 }
+_OBJECT_SCHEMA_KEYS = {
+    "additionalProperties",
+    "properties",
+    "propertyNames",
+    "required",
+}
+_ROOT_ONLY_SCHEMA_KEYS = {"$defs", "$id", "$schema"}
 
 
-def _require_supported_envelope_schema(schema: object, location: str = "$") -> None:
+def _require_supported_envelope_schema(
+    schema: object,
+    location: str = "$",
+    *,
+    root_schema: Mapping[str, object] | None = None,
+    reference_stack: tuple[str, ...] = (),
+    instance_type: str | None = None,
+) -> None:
     """Audit the small schema subset used by the public envelope.
 
     This is deliberately not a general JSON Schema implementation. Any keyword
@@ -85,11 +99,20 @@ def _require_supported_envelope_schema(schema: object, location: str = "$") -> N
 
     if not isinstance(schema, dict):
         raise UnsupportedEnvelopeSchemaError(f"{location} is not a schema object")
+    is_root = root_schema is None
+    if root_schema is None:
+        root_schema = schema
     unsupported = set(schema) - _ENVELOPE_SCHEMA_KEYS
     if unsupported:
         names = ", ".join(sorted(unsupported))
         raise UnsupportedEnvelopeSchemaError(
             f"unsupported schema keyword at {location}: {names}"
+        )
+    misplaced_root_keywords = set(schema) & _ROOT_ONLY_SCHEMA_KEYS
+    if not is_root and misplaced_root_keywords:
+        names = ", ".join(sorted(misplaced_root_keywords))
+        raise UnsupportedEnvelopeSchemaError(
+            f"root-only schema keyword at {location}: {names}"
         )
     if "$schema" in schema and schema["$schema"] != (
         "https://json-schema.org/draft/2020-12/schema"
@@ -97,27 +120,61 @@ def _require_supported_envelope_schema(schema: object, location: str = "$") -> N
         raise UnsupportedEnvelopeSchemaError(
             f"unsupported JSON Schema dialect at {location}"
         )
+    if "$id" in schema and not isinstance(schema["$id"], str):
+        raise UnsupportedEnvelopeSchemaError(f"invalid schema identity at {location}")
+    if "title" in schema and not isinstance(schema["title"], str):
+        raise UnsupportedEnvelopeSchemaError(f"invalid schema title at {location}")
     if "$ref" in schema:
         if set(schema) != {"$ref"} or not isinstance(schema["$ref"], str):
             raise UnsupportedEnvelopeSchemaError(
                 f"unsupported reference form at {location}"
             )
+        reference = schema["$ref"]
+        if reference in reference_stack:
+            raise UnsupportedEnvelopeSchemaError(
+                f"cyclic schema reference at {location}: {reference}"
+            )
+        referenced = _resolve_envelope_schema_reference(reference, root_schema)
+        _require_supported_envelope_schema(
+            referenced,
+            f"{location}.$ref({reference})",
+            root_schema=root_schema,
+            reference_stack=(*reference_stack, reference),
+            instance_type=instance_type,
+        )
         return
-    if "type" in schema and schema["type"] not in {"object", "string"}:
+    expected_type = schema.get("type")
+    if "type" in schema and expected_type not in {"object", "string"}:
         raise UnsupportedEnvelopeSchemaError(f"unsupported schema type at {location}")
+    object_keywords = set(schema) & _OBJECT_SCHEMA_KEYS
+    if object_keywords and expected_type != "object":
+        names = ", ".join(sorted(object_keywords))
+        raise UnsupportedEnvelopeSchemaError(
+            f"object keyword without object type at {location}: {names}"
+        )
     if "pattern" in schema:
-        if not isinstance(schema["pattern"], str):
-            raise UnsupportedEnvelopeSchemaError(f"non-string pattern at {location}")
+        pattern_type = expected_type if expected_type is not None else instance_type
+        if pattern_type != "string" or not isinstance(schema["pattern"], str):
+            raise UnsupportedEnvelopeSchemaError(
+                f"pattern without string type at {location}"
+            )
         try:
             re.compile(schema["pattern"])
         except re.error as exc:
             raise UnsupportedEnvelopeSchemaError(
                 f"invalid pattern at {location}"
             ) from exc
-    if "enum" in schema and (
-        not isinstance(schema["enum"], list) or not schema["enum"]
-    ):
-        raise UnsupportedEnvelopeSchemaError(f"invalid enum at {location}")
+    if "const" in schema and not isinstance(schema["const"], str):
+        raise UnsupportedEnvelopeSchemaError(f"unsupported const at {location}")
+    if "enum" in schema:
+        values = schema["enum"]
+        if (
+            not isinstance(values, list)
+            or not values
+            or any(not isinstance(value, str) for value in values)
+            or len(values) != len(set(values))
+        ):
+            raise UnsupportedEnvelopeSchemaError(f"unsupported enum at {location}")
     if "required" in schema:
         required = schema["required"]
         if (
@@ -134,10 +191,19 @@ def _require_supported_envelope_schema(schema: object, location: str = "$") -> N
     ):
         raise UnsupportedEnvelopeSchemaError(f"invalid properties at {location}")
     for name, child in properties.items():
-        _require_supported_envelope_schema(child, f"{location}.properties.{name}")
+        _require_supported_envelope_schema(
+            child,
+            f"{location}.properties.{name}",
+            root_schema=root_schema,
+            reference_stack=reference_stack,
+        )
     if "propertyNames" in schema:
         _require_supported_envelope_schema(
-            schema["propertyNames"], f"{location}.propertyNames"
+            schema["propertyNames"],
+            f"{location}.propertyNames",
+            root_schema=root_schema,
+            reference_stack=reference_stack,
+            instance_type="string",
         )
     if "additionalProperties" in schema:
         additional = schema["additionalProperties"]
@@ -147,7 +213,10 @@ def _require_supported_envelope_schema(schema: object, location: str = "$") -> N
             )
         if isinstance(additional, dict):
             _require_supported_envelope_schema(
-                additional, f"{location}.additionalProperties"
+                additional,
+                f"{location}.additionalProperties",
+                root_schema=root_schema,
+                reference_stack=reference_stack,
             )
     definitions = schema.get("$defs", {})
     if not isinstance(definitions, dict) or any(
@@ -155,7 +224,12 @@ def _require_supported_envelope_schema(schema: object, location: str = "$") -> N
     ):
         raise UnsupportedEnvelopeSchemaError(f"invalid definitions at {location}")
     for name, child in definitions.items():
-        _require_supported_envelope_schema(child, f"{location}.$defs.{name}")
+        _require_supported_envelope_schema(
+            child,
+            f"{location}.$defs.{name}",
+            root_schema=root_schema,
+            reference_stack=reference_stack,
+        )
 
 
 def _resolve_envelope_schema_reference(
