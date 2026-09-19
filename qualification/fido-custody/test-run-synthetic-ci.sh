@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+test_source_identity_rejection() {
+  local output_file="$scratch_directory/source-identity-rejection.log"
+  local result_file="$scratch_directory/source-identity-rejection.json"
+
+  if bash "$runner" "$root_directory" "$result_file" x86_64 \
+    >"$output_file" 2>&1; then
+    printf 'expected a mismatched source revision to be rejected\n' >&2
+    return 1
+  fi
+  grep -F \
+    'source revision mismatch: expected 45e1e8ca1388ddf029671460fd6e649d29289c1b' \
+    "$output_file" >/dev/null
+}
+
+test_checker_failure_propagation() {
+  local output_file="$scratch_directory/checker-failure.log"
+  local result_file="$scratch_directory/checker-failure.json"
+  local missing_temporary_root="$scratch_directory/missing"
+
+  if TMPDIR="$missing_temporary_root" \
+    bash "$runner" "$source_root" "$result_file" "$(uname -m)" \
+    >"$output_file" 2>&1; then
+    printf 'expected direct checker failures to fail the qualification run\n' >&2
+    return 1
+  fi
+  grep -F 'RuntimeError: TMPDIR is unavailable' "$output_file" >/dev/null
+  python3 -B - "$result_file" <<'PY'
+import json
+import pathlib
+import sys
+
+result = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert result["checks"] == {"normal_exit": 1, "optimized_exit": 1}
+PY
+}
+
+test_imported_dependency_digest_rejection() {
+  local controlled_source="$scratch_directory/controlled-source"
+  local control_result="$scratch_directory/dependency-control.json"
+  local mismatch_result="$scratch_directory/dependency-mismatch.json"
+  local output_file="$scratch_directory/dependency-mismatch.log"
+  local disposable_root="$scratch_directory/dependency-tmp"
+
+  mkdir "$controlled_source" "$disposable_root"
+  cp -R "$source_root/." "$controlled_source"
+  TMPDIR="$disposable_root" \
+    bash "$runner" "$controlled_source" "$control_result" "$(uname -m)"
+
+  local dependency
+  for dependency in \
+    adapters/fido_custody.py \
+    adapters/fido-custody-v1.md \
+    conformance/check-fido-custody.py \
+    conformance/test_support.py \
+    sacrysty_runtime/__init__.py \
+    sacrysty_runtime/process_groups.py \
+    sacrysty_runtime/strict_json.py; do
+    printf '\n' >>"$controlled_source/$dependency"
+    if TMPDIR="$disposable_root" \
+      bash "$runner" "$controlled_source" "$mismatch_result" "$(uname -m)" \
+      >"$output_file" 2>&1; then
+      printf 'expected a changed imported dependency to be rejected\n' >&2
+      return 1
+    fi
+    grep -F \
+      "source digest mismatch for $dependency:" \
+      "$output_file" >/dev/null
+    if [[ -e $mismatch_result ]]; then
+      printf 'dependency mismatch must be rejected before checker execution\n' >&2
+      return 1
+    fi
+    cp "$source_root/$dependency" "$controlled_source/$dependency"
+  done
+}
+
+test_result_links_do_not_mutate_source() {
+  local controlled_source="$scratch_directory/linked-result-source"
+  local result_directory="$scratch_directory/linked-result-output"
+  local disposable_root="$scratch_directory/linked-result-tmp"
+  local symlink_result="$result_directory/symlink-result.json"
+  local symlink_target="$controlled_source/sacrysty_runtime/strict_json.py"
+  local hardlink_result="$result_directory/hardlink-result.json"
+  local hardlink_target="$controlled_source/conformance/test_support.py"
+
+  mkdir "$controlled_source" "$result_directory" "$disposable_root"
+  cp -R "$source_root/." "$controlled_source"
+
+  ln -s "$symlink_target" "$symlink_result"
+  TMPDIR="$disposable_root" \
+    bash "$runner" "$controlled_source" "$symlink_result" "$(uname -m)"
+  if [[ -L $symlink_result ]]; then
+    printf 'result writing followed an existing symlink\n' >&2
+    return 1
+  fi
+  if ! cmp -s "$source_root/sacrysty_runtime/strict_json.py" "$symlink_target"; then
+    printf 'result writing modified a symlinked source file\n' >&2
+    return 1
+  fi
+
+  ln "$hardlink_target" "$hardlink_result"
+  TMPDIR="$disposable_root" \
+    bash "$runner" "$controlled_source" "$hardlink_result" "$(uname -m)"
+  if [[ $hardlink_result -ef $hardlink_target ]]; then
+    printf 'result writing retained a hard link to a source file\n' >&2
+    return 1
+  fi
+  if ! cmp -s "$source_root/conformance/test_support.py" "$hardlink_target"; then
+    printf 'result writing modified a hard-linked source file\n' >&2
+    return 1
+  fi
+  if [[ -n $(git -C "$controlled_source" status --porcelain=v1 --untracked-files=all) ]]; then
+    printf 'linked result writing left the controlled source dirty\n' >&2
+    return 1
+  fi
+
+  python3 -B - "$symlink_result" "$hardlink_result" <<'PY'
+import json
+import pathlib
+import sys
+
+for result_path in map(pathlib.Path, sys.argv[1:]):
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    assert result["outcome"] == "passed"
+    assert result["source"]["clean_after"] is True
+PY
+}
+
+test_successful_candidate_run_records_observations() {
+  local result_file="$scratch_directory/success.json"
+  local disposable_root="$scratch_directory/tmp"
+  local workflow_file="$root_directory/.github/workflows/fido-custody-qualification.yml"
+
+  mkdir "$disposable_root"
+  TMPDIR="$disposable_root" \
+    bash "$runner" "$source_root" "$result_file" "$(uname -m)"
+  python3 -B - "$result_file" "$workflow_file" "$source_root" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+result_path = pathlib.Path(sys.argv[1])
+workflow_path = pathlib.Path(sys.argv[2])
+source_root = pathlib.Path(sys.argv[3])
+result = json.loads(result_path.read_text(encoding="utf-8"))
+expected_workflow_digest = hashlib.sha256(workflow_path.read_bytes()).hexdigest()
+expected_inputs = {
+    "adapters/fido_custody.py",
+    "adapters/fido-custody-v1.md",
+    "conformance/check-fido-custody.py",
+    "conformance/test_support.py",
+    "sacrysty_runtime/__init__.py",
+    "sacrysty_runtime/process_groups.py",
+    "sacrysty_runtime/strict_json.py",
+}
+assert set(result["source"]["sha256"]) == expected_inputs
+for relative_path in expected_inputs:
+    expected_digest = hashlib.sha256((source_root / relative_path).read_bytes()).hexdigest()
+    assert result["source"]["sha256"][relative_path] == expected_digest
+assert result["source"]["revision"] == "45e1e8ca1388ddf029671460fd6e649d29289c1b"
+assert result["outcome"] == "passed"
+assert result["candidate_bound"] is True
+assert result["provisional"] is True
+assert result["checks"] == {"normal_exit": 0, "optimized_exit": 0}
+assert result["source"]["clean_before"] is True
+assert result["source"]["clean_after"] is True
+assert result["workflow"]["file_sha256"] == expected_workflow_digest
+assert result["runner"]["observed_architecture"] == result["runner"]["expected_architecture"]
+assert result["python"]["implementation"]
+assert result["python"]["version"]
+PY
+}
+
+main() {
+  if (($# != 1)); then
+    printf 'usage: %s FROZEN_SOURCE_ROOT\n' "$0" >&2
+    return 2
+  fi
+  if [[ -z ${TEST_TMPDIR:-} ]]; then
+    printf 'TEST_TMPDIR must name writable disposable storage\n' >&2
+    return 2
+  fi
+
+  local prerequisite script_path script_directory
+  for prerequisite in bash cmp cp git grep ln mkdir mktemp python3 realpath rm uname; do
+    if ! command -v "$prerequisite" >/dev/null; then
+      printf 'required command is unavailable: %s\n' "$prerequisite" >&2
+      return 2
+    fi
+  done
+
+  script_path=$(realpath -- "${BASH_SOURCE[0]}")
+  script_directory=${script_path%/*}
+  root_directory=$(realpath -- "$script_directory/../..")
+  runner="$root_directory/qualification/fido-custody/run-synthetic-ci.sh"
+  source_root=$(realpath -- "$1")
+  scratch_directory=$(mktemp -d "$TEST_TMPDIR/fido-qualification-tdd.XXXXXX")
+  trap 'rm -rf -- "$scratch_directory"' EXIT
+
+  test_result_links_do_not_mutate_source
+  test_source_identity_rejection
+  test_checker_failure_propagation
+  test_imported_dependency_digest_rejection
+  test_successful_candidate_run_records_observations
+  printf 'fido custody qualification runner tests passed\n'
+}
+
+main "$@"
