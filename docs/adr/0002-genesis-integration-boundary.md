@@ -29,12 +29,19 @@ field remains unresolved; this proposal adds neither equality nor mismatch
 semantics.
 
 The synthetic custody adapter bounds input, both output streams, and waiting
-time. It blocks catchable `SIGINT` and `SIGTERM` before worker creation, assigns
-the owned handle before restoring the caller's signal mask, and completes
-cleanup before restoring and preserving the caller's normal `SIGTERM`
-disposition. Every completion path requests termination of ordinary
-same-process-group descendants and boundedly attempts to reap the worker
-leader.
+time. It blocks catchable `SIGINT` and `SIGTERM` in the calling thread before
+worker creation. Non-ignored process-wide handlers defer cancellation during
+creation, so delivery through another unmasked thread cannot unwind before the
+returned handle is owned. The worker inherits the caller's signal mask; a
+required Python launcher disables ambient site startup, removes only the
+temporary cancellation blocks the adapter added, and reconstructs the selected
+environment immediately before the pinned worker's final exec.
+
+After deferred cancellation, the adapter cleans the owned group and restores
+the caller's signal state before propagating through the prior disposition. A
+cleanup failure remains dominant. Every completion path requests termination
+of ordinary same-process-group descendants and boundedly attempts to reap the
+worker leader.
 
 A nonzero group-signal denial while the owned leader is running fails. If the
 leader is still owned and observed exited, an `EPERM` signal result permits the
@@ -88,6 +95,13 @@ intended bounds remain the input contracts. Correctly rejecting invalid shapes
 or unsupported extensions can change results for callers that relied on the
 incomplete checker. Such callers must correct their inputs; this candidate
 does not silently migrate them.
+
+The custody corrections preserve public request and result shapes, process and
+I/O bounds, the selected environment, final worker arguments, and ordinary
+no-cancellation and ignored-signal diagnostics. Worker entry now retains mixed
+caller masks, and deferred cancellation after successful cleanup reaches the
+prior disposition instead of being hidden by an ordinary operation error.
+Cleanup failures continue to take precedence.
 
 Material adapter changes require renewed affected qualification. No existing
 private deployment lock is changed, and no hardware qualification is claimed

@@ -8,10 +8,12 @@ import fcntl
 import os
 import pathlib
 import select
+import shutil
 import signal
 import stat
 import subprocess
 import sys
+import threading
 import time
 
 ROOT = pathlib.Path(__file__).parents[1]
@@ -513,6 +515,310 @@ def check_startup_interruption_owns_worker(
     require(worker_was_reaped, "startup interruption left the worker unowned")
 
 
+def check_threaded_startup_cancellation_case(
+    command: list[str],
+    environment: dict[str, str],
+    selected_signal: signal.Signals,
+    trigger: str,
+) -> None:
+    class ExpectedCancellation(BaseException):
+        pass
+
+    spawned: list[subprocess.Popen[bytes]] = []
+    observations: list[tuple[bool, bool]] = []
+    sibling_errors: list[Exception] = []
+    sibling_ready = threading.Event()
+    worker_created = threading.Event()
+    signal_sent = threading.Event()
+    cleanup_started = threading.Event()
+    repeated_signal_sent = threading.Event()
+    real_popen = fido_custody.subprocess.Popen
+    real_terminate_and_reap = fido_custody._terminate_and_reap
+
+    def preserve_caller_disposition(_number: int, _frame: object) -> None:
+        require(bool(spawned), "caller disposition ran before worker creation")
+        process = spawned[0]
+        observations.append(
+            (process.returncode is not None, process_group_exists(process.pid))
+        )
+        raise ExpectedCancellation
+
+    def deliver_from_sibling() -> None:
+        try:
+            signal.pthread_sigmask(signal.SIG_UNBLOCK, {selected_signal})
+            sibling_ready.set()
+            require(
+                worker_created.wait(2.0),
+                "threaded cancellation worker-creation barrier timed out",
+            )
+            if trigger == "process":
+                os.kill(os.getpid(), selected_signal)
+            else:
+                signal.pthread_kill(threading.get_ident(), selected_signal)
+            signal_sent.set()
+            require(
+                cleanup_started.wait(2.0),
+                "threaded cancellation cleanup barrier timed out",
+            )
+            if trigger == "process":
+                os.kill(os.getpid(), selected_signal)
+            else:
+                signal.pthread_kill(threading.get_ident(), selected_signal)
+            repeated_signal_sent.set()
+        except (AssertionError, OSError, ValueError) as exc:
+            sibling_errors.append(exc)
+            sibling_ready.set()
+            signal_sent.set()
+            repeated_signal_sent.set()
+
+    def wait_for_sibling_signal(
+        *arguments: object, **keywords: object
+    ) -> subprocess.Popen[bytes]:
+        require(
+            sibling_ready.wait(2.0),
+            "threaded cancellation sibling-readiness barrier timed out",
+        )
+        process = real_popen(*arguments, **keywords)
+        spawned.append(process)
+        worker_created.set()
+        require(
+            signal_sent.wait(2.0),
+            "threaded cancellation signal barrier timed out",
+        )
+        # Exercise Python after creation but before returning the handle.
+        # CPython dispatches a sibling-delivered handler on this main thread.
+        deadline = time.monotonic() + 0.1
+        while time.monotonic() < deadline:
+            time.sleep(0.001)
+        return process
+
+    def cleanup_after_repeated_signal(process: subprocess.Popen[bytes]) -> None:
+        cleanup_started.set()
+        require(
+            repeated_signal_sent.wait(2.0),
+            "threaded cancellation repeated-signal barrier timed out",
+        )
+        real_terminate_and_reap(process)
+
+    previous_handler = signal.signal(selected_signal, preserve_caller_disposition)
+    sibling = threading.Thread(target=deliver_from_sibling)
+    sibling.start()
+    cancellation_caught = False
+    try:
+        # Construct only the delivery points around real process creation and
+        # cleanup; the adapter still owns and reaps the actual worker group.
+        fido_custody.subprocess.Popen = wait_for_sibling_signal
+        fido_custody._terminate_and_reap = cleanup_after_repeated_signal
+        try:
+            OneShotCustodyAdapter(
+                command,
+                timeout_seconds=2.0,
+                environment=environment,
+            ).unwrap(request_for("timeout"))
+        except ExpectedCancellation:
+            cancellation_caught = True
+    finally:
+        fido_custody.subprocess.Popen = real_popen
+        fido_custody._terminate_and_reap = real_terminate_and_reap
+        signal.signal(selected_signal, previous_handler)
+        sibling.join(timeout=2.0)
+        for process in spawned:
+            if process.returncode is None:
+                process.kill()
+                process.wait(timeout=2.0)
+
+    require(not sibling.is_alive(), "threaded cancellation sibling survived")
+    if sibling_errors:
+        raise sibling_errors[0]
+    require(cancellation_caught, "caller cancellation disposition was not preserved")
+    require(
+        observations == [(True, False)],
+        "caller cancellation disposition ran before owned cleanup: "
+        f"{observations!r}",
+    )
+
+
+def check_threaded_startup_cancellation_owns_worker(
+    command: list[str], environment: dict[str, str]
+) -> None:
+    for selected_signal, trigger in (
+        (signal.SIGINT, "process"),
+        (signal.SIGTERM, "thread"),
+    ):
+        check_threaded_startup_cancellation_case(
+            command, environment, selected_signal, trigger
+        )
+
+
+def check_cleanup_cancellation_arbitration(
+    command: list[str], environment: dict[str, str]
+) -> None:
+    class ExpectedCancellation(BaseException):
+        pass
+
+    selected_signal = signal.SIGTERM
+    real_terminate_and_reap = fido_custody._terminate_and_reap
+
+    def run_case(
+        *,
+        disposition: str,
+        send_signal: bool,
+        cleanup_failure: bool,
+    ) -> tuple[str, list[tuple[bool, bool, bool, bool, bool]]]:
+        spawned: list[subprocess.Popen[bytes]] = []
+        handler_observations: list[tuple[bool, bool, bool, bool, bool]] = []
+        sibling_errors: list[Exception] = []
+        cleanup_started = threading.Event()
+        signal_sent = threading.Event()
+        cleanup_finished = threading.Event()
+
+        def preserve_caller_disposition(_number: int, _frame: object) -> None:
+            require(bool(spawned), "caller disposition ran without an owned worker")
+            process = spawned[0]
+            current_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+            handler_observations.append(
+                (
+                    cleanup_finished.is_set(),
+                    process.returncode is not None,
+                    process_group_exists(process.pid),
+                    signal.getsignal(selected_signal)
+                    is preserve_caller_disposition,
+                    selected_signal not in current_mask,
+                )
+            )
+            raise ExpectedCancellation
+
+        def deliver_during_cleanup() -> None:
+            try:
+                signal.pthread_sigmask(signal.SIG_UNBLOCK, {selected_signal})
+                require(
+                    cleanup_started.wait(2.0),
+                    "cleanup cancellation start barrier timed out",
+                )
+                signal.pthread_kill(threading.get_ident(), selected_signal)
+                signal_sent.set()
+            except (AssertionError, OSError, ValueError) as exc:
+                sibling_errors.append(exc)
+                signal_sent.set()
+
+        def cleanup_after_signal(process: subprocess.Popen[bytes]) -> None:
+            spawned.append(process)
+            cleanup_started.set()
+            if send_signal:
+                require(
+                    signal_sent.wait(2.0),
+                    "cleanup cancellation signal barrier timed out",
+                )
+                # Let CPython dispatch the sibling-delivered signal handler on
+                # this main thread while the adapter still owns the process.
+                deadline = time.monotonic() + 0.1
+                while time.monotonic() < deadline:
+                    time.sleep(0.001)
+            real_terminate_and_reap(process)
+            cleanup_finished.set()
+            if cleanup_failure:
+                raise CustodyError("constructed cleanup failure")
+
+        previous_mask = signal.pthread_sigmask(
+            signal.SIG_UNBLOCK, {selected_signal}
+        )
+        previous_handler = signal.getsignal(selected_signal)
+        installed_handler: object
+        if disposition == "ignored":
+            installed_handler = signal.SIG_IGN
+        else:
+            installed_handler = preserve_caller_disposition
+        signal.signal(selected_signal, installed_handler)
+        sibling: threading.Thread | None = None
+        if send_signal:
+            sibling = threading.Thread(target=deliver_during_cleanup)
+
+        outcome = "no outcome"
+        restored_handler: object | None = None
+        restored_mask: set[signal.Signals] | None = None
+        try:
+            if sibling is not None:
+                sibling.start()
+            fido_custody._terminate_and_reap = cleanup_after_signal
+            try:
+                OneShotCustodyAdapter(
+                    command,
+                    timeout_seconds=0.05,
+                    environment=environment,
+                ).unwrap(request_for("timeout"))
+            except ExpectedCancellation:
+                outcome = "caller cancellation"
+            except CustodyError as exc:
+                outcome = str(exc)
+            restored_handler = signal.getsignal(selected_signal)
+            restored_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+        finally:
+            fido_custody._terminate_and_reap = real_terminate_and_reap
+            signal.signal(selected_signal, previous_handler)
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+            if sibling is not None:
+                sibling.join(timeout=2.0)
+            for process in spawned:
+                if process.returncode is None:
+                    real_terminate_and_reap(process)
+
+        if sibling is not None:
+            require(not sibling.is_alive(), "cleanup cancellation sibling survived")
+        if sibling_errors:
+            raise sibling_errors[0]
+        require(len(spawned) == 1, "cleanup cancellation did not create one worker")
+        process = spawned[0]
+        require(
+            cleanup_finished.is_set()
+            and process.returncode is not None
+            and not process_group_exists(process.pid),
+            "cleanup cancellation left its owned worker group present",
+        )
+        require(
+            restored_handler == installed_handler
+            and restored_mask is not None
+            and selected_signal not in restored_mask,
+            "cleanup cancellation did not restore the caller signal state",
+        )
+        return outcome, handler_observations
+
+    no_signal_outcome, no_signal_observations = run_case(
+        disposition="custom", send_signal=False, cleanup_failure=False
+    )
+    require(
+        no_signal_outcome == "worker timeout" and not no_signal_observations,
+        "no-signal cleanup did not preserve the ordinary timeout diagnostic",
+    )
+    ignored_outcome, ignored_observations = run_case(
+        disposition="ignored", send_signal=True, cleanup_failure=False
+    )
+    require(
+        ignored_outcome == "worker timeout" and not ignored_observations,
+        "ignored cleanup signal changed the ordinary timeout diagnostic",
+    )
+    cleanup_failure_outcome, cleanup_failure_observations = run_case(
+        disposition="custom", send_signal=True, cleanup_failure=True
+    )
+    require(
+        cleanup_failure_outcome == "constructed cleanup failure"
+        and not cleanup_failure_observations,
+        "recorded cancellation superseded cleanup failure",
+    )
+    cancellation_outcome, cancellation_observations = run_case(
+        disposition="custom", send_signal=True, cleanup_failure=False
+    )
+    require(
+        cancellation_outcome == "caller cancellation",
+        "cancellation recorded during cleanup did not supersede worker timeout: "
+        f"{cancellation_outcome!r}",
+    )
+    require(
+        cancellation_observations == [(True, True, False, True, True)],
+        "caller cancellation disposition ran before cleanup and restoration: "
+        f"{cancellation_observations!r}",
+    )
+
+
 def check_cleanup_signals_only_owned_process_group(
     command: list[str], environment: dict[str, str]
 ) -> None:
@@ -661,6 +967,260 @@ def default_pipe_capacity() -> int | None:
         os.close(write_fd)
 
 
+def compile_environment_recorder(directory: pathlib.Path) -> pathlib.Path:
+    source = directory / "environment-recorder.c"
+    executable = directory / "environment-recorder"
+    source.write_text(
+        r"""#define _POSIX_C_SOURCE 200809L
+#include <signal.h>
+#include <stdio.h>
+#include <unistd.h>
+
+extern char **environ;
+
+int main(int argc, char **argv) {
+    if (argc < 3) {
+        return 64;
+    }
+    FILE *marker = fopen(argv[1], "w");
+    if (marker == NULL) {
+        return 65;
+    }
+    sigset_t mask;
+    if (sigprocmask(SIG_BLOCK, NULL, &mask) != 0) {
+        return 66;
+    }
+    if (
+        fprintf(marker, "mask:SIGINT=%d\n", sigismember(&mask, SIGINT)) < 0 ||
+        fprintf(marker, "mask:SIGTERM=%d\n", sigismember(&mask, SIGTERM)) < 0 ||
+        fprintf(marker, "mask:SIGUSR1=%d\n", sigismember(&mask, SIGUSR1)) < 0
+    ) {
+        return 67;
+    }
+    for (char **entry = environ; *entry != NULL; entry++) {
+        if (fprintf(marker, "environment:%s\n", *entry) < 0) {
+            return 68;
+        }
+    }
+    for (int index = 2; index < argc; index++) {
+        if (fprintf(marker, "argv:%s\n", argv[index]) < 0) {
+            return 69;
+        }
+    }
+    if (fclose(marker) != 0) {
+        return 70;
+    }
+    execv(argv[2], &argv[2]);
+    return 71;
+}
+""",
+        encoding="utf-8",
+    )
+    compiler = shutil.which("cc", path=os.environ["PATH"])
+    require(compiler is not None, "native C compiler is unavailable")
+    completed = subprocess.run(
+        [
+            compiler,
+            "-std=c11",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-o",
+            str(executable),
+            str(source),
+        ],
+        check=False,
+        capture_output=True,
+        env={
+            "HOME": str(directory),
+            "LANG": "C",
+            "LC_ALL": "C",
+            "PATH": os.environ["PATH"],
+            "TMPDIR": str(directory),
+        },
+    )
+    require(
+        completed.returncode == 0,
+        "native environment recorder did not compile: "
+        + completed.stderr.decode("utf-8", errors="replace"),
+    )
+    return executable
+
+
+def check_final_worker_environment(
+    directory: pathlib.Path, worker_command: list[str]
+) -> None:
+    environment_root = directory / "final-environment"
+    environment_root.mkdir()
+    home = environment_root / "home"
+    home.mkdir()
+    worker_observation_path = environment_root / "worker-observation"
+    startup_marker = environment_root / "ambient-startup-ran"
+
+    user_site_query = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-B",
+            "-c",
+            "import site; print(site.getusersitepackages())",
+        ],
+        check=False,
+        capture_output=True,
+        env={"HOME": str(home), "PATH": os.environ["PATH"]},
+        text=True,
+    )
+    require(
+        user_site_query.returncode == 0,
+        "synthetic user-site location is unavailable",
+    )
+    user_site = pathlib.Path(user_site_query.stdout.strip()).resolve()
+    require(
+        home.resolve() in user_site.parents,
+        "synthetic user-site path escaped its disposable home",
+    )
+    user_site.mkdir(parents=True)
+    (user_site / "sacrysty-poison.pth").write_text(
+        "import os,pathlib; "
+        f"pathlib.Path({str(startup_marker)!r}).write_text('ran', encoding='ascii'); "
+        "os.environ['SACRYSTY_TEST_STARTUP_POISON']='present'; "
+        "os.environ['LANG']='poisoned'\n",
+        encoding="utf-8",
+    )
+
+    recorder = compile_environment_recorder(environment_root)
+    supplied_environment = {
+        "PATH": os.environ["PATH"],
+        "HOME": str(home),
+        "LANG": "C",
+        "LC_ALL": "C",
+        "TMPDIR": str(environment_root),
+        "PYTHONPATH": str(environment_root / "ambient-pythonpath"),
+        "SACRYSTY_TEST_LEAK": "must-not-reach-worker",
+        "__CF_USER_TEXT_ENCODING": "ambient-macos-value",
+    }
+    expected_environment = {
+        name: value
+        for name, value in supplied_environment.items()
+        if name in {"PATH", "HOME", "LANG", "LC_ALL", "TMPDIR"}
+    }
+    expected_argv = [
+        worker_command[0],
+        "-I",
+        "-S",
+        "-B",
+        *worker_command[1:],
+    ]
+    cancellation_signals = {signal.SIGINT, signal.SIGTERM}
+    retained_signal = signal.SIGUSR1
+    tested_signals = cancellation_signals | {retained_signal}
+    initial_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+    mask_mismatches: list[str] = []
+
+    try:
+        for label, blocked_cancellation_signals in (
+            ("no cancellation signals", set()),
+            ("both cancellation signals", cancellation_signals),
+            ("only SIGINT", {signal.SIGINT}),
+            ("only SIGTERM", {signal.SIGTERM}),
+        ):
+            caller_mask = (
+                (initial_mask - tested_signals)
+                | blocked_cancellation_signals
+                | {retained_signal}
+            )
+            signal.pthread_sigmask(signal.SIG_SETMASK, caller_mask)
+            result = OneShotCustodyAdapter(
+                [
+                    str(recorder),
+                    str(worker_observation_path),
+                    worker_command[0],
+                    "-I",
+                    "-S",
+                    "-B",
+                    *worker_command[1:],
+                ],
+                environment=supplied_environment,
+            ).unwrap(request_for())
+            observed_caller_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+            require(
+                observed_caller_mask == caller_mask,
+                f"{label} changed the caller signal mask",
+            )
+            require(
+                result.plaintext == b"synthetic plaintext canary",
+                f"{label} changed the legitimate response",
+            )
+
+            observed_environment: dict[str, str] = {}
+            observed_argv: list[str] = []
+            observed_worker_mask: dict[str, bool] = {}
+            for line in worker_observation_path.read_text(
+                encoding="utf-8"
+            ).splitlines():
+                record_type, separator, record = line.partition(":")
+                require(bool(separator), "worker wrote an invalid observation")
+                if record_type == "environment":
+                    name, separator, value = record.partition("=")
+                    require(
+                        bool(separator), "environment worker wrote an invalid record"
+                    )
+                    observed_environment[name] = value
+                elif record_type == "argv":
+                    observed_argv.append(record)
+                elif record_type == "mask":
+                    name, separator, value = record.partition("=")
+                    require(
+                        bool(separator)
+                        and name in {"SIGINT", "SIGTERM", "SIGUSR1"}
+                        and name not in observed_worker_mask
+                        and value in {"0", "1"},
+                        "worker wrote an invalid signal-mask record",
+                    )
+                    observed_worker_mask[name] = value == "1"
+                else:
+                    raise AssertionError("worker wrote an unknown observation")
+
+            require(
+                not startup_marker.exists(),
+                f"ambient user-site code ran before the {label} worker",
+            )
+            require(
+                observed_environment == expected_environment,
+                f"{label} did not receive the exact scrubbed environment: "
+                f"expected={expected_environment!r} "
+                f"observed={observed_environment!r}",
+            )
+            require(
+                observed_argv == expected_argv,
+                f"{label} changed the final worker argv: "
+                f"expected={expected_argv!r} observed={observed_argv!r}",
+            )
+            expected_worker_mask = {
+                "SIGINT": signal.SIGINT in caller_mask,
+                "SIGTERM": signal.SIGTERM in caller_mask,
+                "SIGUSR1": retained_signal in caller_mask,
+            }
+            if observed_worker_mask != expected_worker_mask:
+                mask_mismatches.append(
+                    f"{label}: expected={expected_worker_mask!r} "
+                    f"observed={observed_worker_mask!r}"
+                )
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, initial_mask)
+
+    require(
+        signal.pthread_sigmask(signal.SIG_BLOCK, set()) == initial_mask,
+        "final-worker fixture did not restore the caller signal mask",
+    )
+    require(
+        not mask_mismatches,
+        "final worker did not preserve the caller signal mask: "
+        + "; ".join(mask_mismatches),
+    )
+
+
 def check_sigterm_cancellation(directory: pathlib.Path, worker_source: str) -> None:
     caller_source = directory / "sigterm-caller.py"
     caller_source.write_text(SIGTERM_CALLER, encoding="utf-8")
@@ -762,6 +1322,18 @@ def main() -> None:
         }
         adapter = OneShotCustodyAdapter(command, environment=environment)
         check_startup_interruption_owns_worker(command, environment)
+        check_threaded_startup_cancellation_owns_worker(
+            command,
+            {
+                **environment,
+                "HOME": str(directory_path),
+                "LANG": "C",
+                "LC_ALL": "C",
+                "TMPDIR": str(directory_path),
+            },
+        )
+        check_cleanup_cancellation_arbitration(command, environment)
+        check_final_worker_environment(directory_path, command)
         check_cleanup_signals_only_owned_process_group(command, environment)
         check_nonzero_group_signal_denial_requires_definitive_absence(
             command, environment

@@ -13,13 +13,14 @@ adapter.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import selectors
 import signal
 import subprocess
 import sys
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import FrameType
 from typing import BinaryIO
@@ -34,14 +35,38 @@ from sacrysty_runtime.process_groups import (
 from sacrysty_runtime.strict_json import StrictJsonError, decode_strict_json
 
 _UNBLOCK_CANCELLATION_AND_EXEC = r"""
+import json
 import os
 import signal
 import sys
 
 try:
-    signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM})
-    os.execvpe(sys.argv[1], sys.argv[1:], os.environ)
-except OSError:
+    selected_environment = json.loads(sys.argv[1])
+    if not isinstance(selected_environment, dict) or any(
+        not isinstance(name, str) or not isinstance(value, str)
+        for name, value in selected_environment.items()
+    ):
+        raise ValueError("worker environment is invalid")
+    selected_signal_names = json.loads(sys.argv[2])
+    allowed_signal_names = {"SIGINT", "SIGTERM"}
+    if (
+        not isinstance(selected_signal_names, list)
+        or not selected_signal_names
+        or any(not isinstance(name, str) for name in selected_signal_names)
+        or len(set(selected_signal_names)) != len(selected_signal_names)
+        or not set(selected_signal_names) <= allowed_signal_names
+    ):
+        raise ValueError("worker signal set is invalid")
+    selected_signals = {
+        getattr(signal, selected_signal_name)
+        for selected_signal_name in selected_signal_names
+    }
+    command = sys.argv[3:]
+    if not command:
+        raise ValueError("worker command is empty")
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, selected_signals)
+    os.execvpe(command[0], command, selected_environment)
+except Exception:
     os.write(2, b"worker setup failed\n")
     os._exit(125)
 """
@@ -60,7 +85,7 @@ class _WorkerTimedOut(Exception):
     pass
 
 
-class _CallerTerminated(BaseException):
+class _CallerCancelled(BaseException):
     def __init__(self, signal_number: int, frame: FrameType | None) -> None:
         self.signal_number = signal_number
         self.frame = frame
@@ -133,6 +158,7 @@ def _bounded_communicate(
     input_bytes: bytes,
     timeout_seconds: float,
     max_output_bytes: int,
+    cancellation_requested: Callable[[], _CallerCancelled | None],
 ) -> tuple[bytes, bytes]:
     """Exchange bytes without buffering beyond either output limit."""
 
@@ -162,12 +188,15 @@ def _bounded_communicate(
         selector.register(stderr, selectors.EVENT_READ, "stderr")
 
         while selector.get_map():
+            cancellation = cancellation_requested()
+            if cancellation is not None:
+                raise cancellation
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise _WorkerTimedOut
-            events = selector.select(remaining)
+            events = selector.select(min(0.05, remaining))
             if not events:
-                raise _WorkerTimedOut
+                continue
 
             for key, _mask in events:
                 pipe = key.fileobj
@@ -201,6 +230,9 @@ def _bounded_communicate(
         selector.close()
 
     while not leader_exited_unreaped(process):
+        cancellation = cancellation_requested()
+        if cancellation is not None:
+            raise cancellation
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise _WorkerTimedOut
@@ -208,11 +240,11 @@ def _bounded_communicate(
     return bytes(buffers["stdout"]), bytes(buffers["stderr"])
 
 
-def _propagate_sigterm(
-    previous_handler: object, cancellation: _CallerTerminated
+def _propagate_cancellation(
+    previous_handler: object, cancellation: _CallerCancelled
 ) -> None:
     if previous_handler == signal.SIG_DFL:
-        os.kill(os.getpid(), signal.SIGTERM)
+        os.kill(os.getpid(), cancellation.signal_number)
         raise CustodyError("worker interruption propagation failed")
     if callable(previous_handler):
         previous_handler(cancellation.signal_number, cancellation.frame)
@@ -251,32 +283,59 @@ class OneShotCustodyAdapter:
             raise CustodyError("envelope too large")
         process: subprocess.Popen[bytes] | None = None
         process_owned = True
-        cancellation: _CallerTerminated | None = None
+        cancellation: _CallerCancelled | None = None
         previous_signal_mask: set[signal.Signals] | None = None
-        previous_sigterm_handler: object | None = None
-        sigterm_handler_installed = False
+        previous_signal_handlers: dict[signal.Signals, object] = {}
+        installed_signal_handlers: list[signal.Signals] = []
         try:
             previous_signal_mask = signal.pthread_sigmask(
                 signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM}
             )
 
-            def terminate_caller(signal_number: int, frame: FrameType | None) -> None:
-                raise _CallerTerminated(signal_number, frame)
+            def defer_caller_cancellation(
+                signal_number: int, frame: FrameType | None
+            ) -> None:
+                nonlocal cancellation
+                if cancellation is None:
+                    cancellation = _CallerCancelled(signal_number, frame)
 
-            previous_sigterm_handler = signal.getsignal(signal.SIGTERM)
-            if previous_sigterm_handler != signal.SIG_IGN:
-                signal.signal(signal.SIGTERM, terminate_caller)
-                sigterm_handler_installed = True
+            for selected_signal in (signal.SIGINT, signal.SIGTERM):
+                previous_handler = signal.getsignal(selected_signal)
+                previous_signal_handlers[selected_signal] = previous_handler
+                if previous_handler != signal.SIG_IGN:
+                    signal.signal(selected_signal, defer_caller_cancellation)
+                    installed_signal_handlers.append(selected_signal)
             try:
                 command = self._command
-                if not {signal.SIGINT, signal.SIGTERM} <= previous_signal_mask:
+                added_cancellation_signals = {
+                    signal.SIGINT,
+                    signal.SIGTERM,
+                } - previous_signal_mask
+                if added_cancellation_signals:
+                    serialized_environment = json.dumps(
+                        self._environment,
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    )
+                    serialized_signal_names = json.dumps(
+                        sorted(selected.name for selected in added_cancellation_signals),
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                    )
                     command = (
                         sys.executable,
+                        "-I",
+                        "-S",
                         "-B",
                         "-c",
                         _UNBLOCK_CANCELLATION_AND_EXEC,
+                        serialized_environment,
+                        serialized_signal_names,
                         *command,
                     )
+                if cancellation is not None:
+                    raise cancellation
                 try:
                     process = subprocess.Popen(
                         command,
@@ -288,7 +347,11 @@ class OneShotCustodyAdapter:
                         start_new_session=True,
                     )
                 except OSError as exc:
+                    if cancellation is not None:
+                        raise cancellation from exc
                     raise CustodyError("worker unavailable") from exc
+                if cancellation is not None:
+                    raise cancellation
             finally:
                 signal.pthread_sigmask(signal.SIG_SETMASK, previous_signal_mask)
             try:
@@ -297,6 +360,7 @@ class OneShotCustodyAdapter:
                     request.envelope,
                     self._timeout_seconds,
                     self._max_output_bytes,
+                    lambda: cancellation,
                 )
             except _WorkerTimedOut as exc:
                 raise CustodyError("worker timeout") from exc
@@ -309,7 +373,7 @@ class OneShotCustodyAdapter:
             except ProcessGroupOwnershipLost as exc:
                 process_owned = False
                 raise CustodyError("worker ownership lost") from exc
-        except _CallerTerminated as exc:
+        except _CallerCancelled as exc:
             cancellation = exc
         finally:
             if previous_signal_mask is not None:
@@ -323,14 +387,19 @@ class OneShotCustodyAdapter:
                     # termination and bounded leader reaping.
                     _terminate_and_reap(process)
             finally:
-                if sigterm_handler_installed and previous_sigterm_handler is not None:
-                    signal.signal(signal.SIGTERM, previous_sigterm_handler)
+                for selected_signal in installed_signal_handlers:
+                    signal.signal(
+                        selected_signal, previous_signal_handlers[selected_signal]
+                    )
                 if previous_signal_mask is not None:
                     signal.pthread_sigmask(signal.SIG_SETMASK, previous_signal_mask)
-        if cancellation is not None:
-            if previous_sigterm_handler is None:
-                raise CustodyError("worker interrupted")
-            _propagate_sigterm(previous_sigterm_handler, cancellation)
+            if cancellation is not None:
+                previous_handler = previous_signal_handlers.get(
+                    signal.Signals(cancellation.signal_number)
+                )
+                if previous_handler is None:
+                    raise CustodyError("worker interrupted")
+                _propagate_cancellation(previous_handler, cancellation)
         if process is None:
             raise CustodyError("worker unavailable")
         if process.returncode != 0:
