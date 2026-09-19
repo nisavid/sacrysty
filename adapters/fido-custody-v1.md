@@ -6,12 +6,31 @@ it does not implement FIDO, age, or cryptography.
 
 The caller supplies an encrypted age envelope and the immutable profile,
 plugin, and age artifact digests, after resolving and verifying that dependency
-closure. The adapter starts a fresh worker with a
-minimal scrubbed environment, sends the envelope through a pipe, and reads one
-bounded response. The worker exits before the result is returned. Plaintext,
-PINs, PRF output, credential handles, and file keys never appear in argv,
-environment, logs, receipts, or durable temporary files. `AGEDEBUG=plugin` and
-other protocol debugging are rejected.
+closure. The adapter starts a fresh worker with a minimal scrubbed environment
+and the caller's signal mask. It may temporarily block catchable `SIGINT` and
+`SIGTERM` while creating the worker. When restoring worker-entry state needs a
+launcher, that launcher disables ambient Python site startup, removes only the
+signal blocks the adapter added, and reconstructs the selected environment
+immediately before executing the pinned worker.
+
+The reference constructor accepts a finite positive non-boolean real timeout
+whose conversion to a Python float remains finite and positive. Envelope and
+output-stream byte limits are exact positive non-boolean integers. Invalid
+limits raise `ValueError` before environment capture, signal-state access, or
+worker creation.
+
+`unwrap` is supported only on the Python main thread. A background invocation
+raises a value-free `CustodyError` before request processing, signal-state
+inspection or mutation, or worker creation, regardless of the caller's
+`SIGINT` and `SIGTERM` dispositions.
+
+The adapter sends the envelope through a pipe and reads one bounded response.
+The worker exits before the result is returned. Deferred cancellation propagates
+only after successful owned cleanup and caller signal-state restoration; a
+cleanup failure remains dominant. Plaintext, PINs, PRF output, credential
+handles, and file keys never appear in argv, environment, logs, receipts, or
+durable temporary files. `AGEDEBUG=plugin` and other protocol debugging are
+rejected.
 
 The response is accepted only when it is one complete JSON object with
 `status`, plaintext bytes, a matching SHA-256 digest, the three input digests,
