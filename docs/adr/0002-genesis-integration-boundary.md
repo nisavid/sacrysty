@@ -29,13 +29,23 @@ field remains unresolved; this proposal adds neither equality nor mismatch
 semantics.
 
 The synthetic custody adapter bounds input, both output streams, and waiting
-time. It blocks catchable `SIGINT` and `SIGTERM` in the calling thread before
-worker creation. Non-ignored process-wide handlers defer cancellation during
-creation, so delivery through another unmasked thread cannot unwind before the
-returned handle is owned. The worker inherits the caller's signal mask; a
-required Python launcher disables ambient site startup, removes only the
-temporary cancellation blocks the adapter added, and reconstructs the selected
-environment immediately before the pinned worker's final exec.
+time. Its constructor accepts a finite positive non-boolean real timeout only
+when conversion to a Python float remains finite and positive. Envelope and
+output-stream byte limits are exact positive non-boolean integers. Invalid
+limits fail with `ValueError` before environment capture, signal-state access,
+or worker creation.
+
+`unwrap` is supported only on the Python main thread. A background invocation
+fails with a value-free `CustodyError` before request processing, signal-state
+inspection or mutation, or worker creation, including when both cancellation
+signals are ignored. On the main thread, the adapter blocks catchable `SIGINT`
+and `SIGTERM` before worker creation. Non-ignored process-wide handlers defer
+cancellation during creation, so delivery through another unmasked thread
+cannot unwind before the returned handle is owned. The worker inherits the
+caller's signal mask; a required Python launcher disables ambient site startup,
+removes only the temporary cancellation blocks the adapter added, and
+reconstructs the selected environment immediately before the pinned worker's
+final exec.
 
 After deferred cancellation, the adapter cleans the owned group and restores
 the caller's signal state before propagating through the prior disposition. A
@@ -102,6 +112,12 @@ no-cancellation and ignored-signal diagnostics. Worker entry now retains mixed
 caller masks, and deferred cancellation after successful cleanup reaches the
 prior disposition instead of being hidden by an ordinary operation error.
 Cleanup failures continue to take precedence.
+
+Background-thread invocation is no longer accepted. This includes the earlier
+both-signals-ignored path, which could reach worker creation without installing
+handlers. Callers using that path must move `unwrap` to the main thread. The
+change makes the adapter's process-wide handler model explicit rather than
+adding a second cancellation interface.
 
 Material adapter changes require renewed affected qualification. No existing
 private deployment lock is changed, and no hardware qualification is claimed

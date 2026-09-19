@@ -13,6 +13,17 @@ launcher, that launcher disables ambient Python site startup, removes only the
 signal blocks the adapter added, and reconstructs the selected environment
 immediately before executing the pinned worker.
 
+The reference constructor accepts a finite positive non-boolean real timeout
+whose conversion to a Python float remains finite and positive. Envelope and
+output-stream byte limits are exact positive non-boolean integers. Invalid
+limits raise `ValueError` before environment capture, signal-state access, or
+worker creation.
+
+`unwrap` is supported only on the Python main thread. A background invocation
+raises a value-free `CustodyError` before request processing, signal-state
+inspection or mutation, or worker creation, regardless of the caller's
+`SIGINT` and `SIGTERM` dispositions.
+
 The adapter sends the envelope through a pipe and reads one bounded response.
 The worker exits before the result is returned. Deferred cancellation propagates
 only after successful owned cleanup and caller signal-state restoration; a

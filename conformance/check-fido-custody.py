@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import errno
 import fcntl
+from fractions import Fraction
 import os
 import pathlib
 import select
@@ -429,6 +430,102 @@ def check_pid_marker_readiness(directory: pathlib.Path) -> None:
         producer.communicate(timeout=2.0)
 
 
+def check_resource_limit_validation(
+    command: list[str], environment: dict[str, str]
+) -> None:
+    accepted_cases: tuple[tuple[str, dict[str, object]], ...] = (
+        ("integer timeout", {"timeout_seconds": 1}),
+        ("float timeout", {"timeout_seconds": 1.0}),
+        ("fractional real timeout", {"timeout_seconds": Fraction(3, 2)}),
+        (
+            "large exact integer byte limits",
+            {
+                "max_envelope_bytes": 1 << 200,
+                "max_output_bytes": 1 << 200,
+            },
+        ),
+    )
+    for label, limits in accepted_cases:
+        result = OneShotCustodyAdapter(
+            command,
+            environment=environment,
+            **limits,
+        ).unwrap(request_for())
+        require(
+            result.plaintext == b"synthetic plaintext canary",
+            f"{label} did not preserve an ordinary unwrap",
+        )
+
+    invalid_cases: list[tuple[str, str, object]] = [
+        ("zero timeout", "timeout_seconds", 0),
+        ("negative timeout", "timeout_seconds", -1),
+        ("positive infinite timeout", "timeout_seconds", float("inf")),
+        ("negative infinite timeout", "timeout_seconds", float("-inf")),
+        ("NaN timeout", "timeout_seconds", float("nan")),
+        ("true timeout", "timeout_seconds", True),
+        ("false timeout", "timeout_seconds", False),
+        ("string timeout", "timeout_seconds", "1"),
+        ("null timeout", "timeout_seconds", None),
+        ("complex timeout", "timeout_seconds", 1 + 0j),
+        ("unrepresentable timeout", "timeout_seconds", 10**400),
+    ]
+    for parameter in ("max_envelope_bytes", "max_output_bytes"):
+        invalid_cases.extend(
+            (
+                (f"zero {parameter}", parameter, 0),
+                (f"negative {parameter}", parameter, -1),
+                (f"positive infinite {parameter}", parameter, float("inf")),
+                (f"negative infinite {parameter}", parameter, float("-inf")),
+                (f"NaN {parameter}", parameter, float("nan")),
+                (f"true {parameter}", parameter, True),
+                (f"false {parameter}", parameter, False),
+                (f"integral float {parameter}", parameter, 1.0),
+                (f"fractional {parameter}", parameter, 1.5),
+                (f"fraction {parameter}", parameter, Fraction(1, 1)),
+                (f"string {parameter}", parameter, "1"),
+                (f"null {parameter}", parameter, None),
+                (f"complex {parameter}", parameter, 1 + 0j),
+            )
+        )
+
+    real_popen = fido_custody.subprocess.Popen
+    real_pthread_sigmask = fido_custody.signal.pthread_sigmask
+    real_getsignal = fido_custody.signal.getsignal
+    real_signal = fido_custody.signal.signal
+    effects: list[str] = []
+
+    def forbid_effect(*_arguments: object, **_keywords: object) -> None:
+        effects.append("signal state or worker creation")
+        raise AssertionError("invalid resource limit reached operation state")
+
+    try:
+        fido_custody.subprocess.Popen = forbid_effect
+        fido_custody.signal.pthread_sigmask = forbid_effect
+        fido_custody.signal.getsignal = forbid_effect
+        fido_custody.signal.signal = forbid_effect
+        for label, parameter, value in invalid_cases:
+            effects.clear()
+            try:
+                OneShotCustodyAdapter(
+                    command,
+                    environment=environment,
+                    **{parameter: value},
+                )
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(f"{label} was accepted")
+            require(
+                not effects,
+                f"{label} reached signal state or worker creation",
+            )
+    finally:
+        fido_custody.subprocess.Popen = real_popen
+        fido_custody.signal.pthread_sigmask = real_pthread_sigmask
+        fido_custody.signal.getsignal = real_getsignal
+        fido_custody.signal.signal = real_signal
+
+
 def process_group_exists(process_group: int) -> bool:
     try:
         os.killpg(process_group, 0)
@@ -467,6 +564,97 @@ def wait_for_process_group_exit(process_group: int, *, timeout_seconds: float) -
         if time.monotonic() >= deadline:
             raise AssertionError("worker process group survived cleanup")
         time.sleep(0.01)
+
+
+def check_background_unwrap_rejected(
+    command: list[str], environment: dict[str, str]
+) -> None:
+    cancellation_signals = (signal.SIGINT, signal.SIGTERM)
+    real_popen = fido_custody.subprocess.Popen
+    real_pthread_sigmask = fido_custody.signal.pthread_sigmask
+    real_getsignal = fido_custody.signal.getsignal
+    real_signal = fido_custody.signal.signal
+    original_handlers = {
+        selected_signal: real_getsignal(selected_signal)
+        for selected_signal in cancellation_signals
+    }
+
+    try:
+        for label, ignore_cancellation in (
+            ("ordinary", False),
+            ("both ignored", True),
+        ):
+            for selected_signal in cancellation_signals:
+                real_signal(
+                    selected_signal,
+                    signal.SIG_IGN
+                    if ignore_cancellation
+                    else original_handlers[selected_signal],
+                )
+            expected_handlers = {
+                selected_signal: real_getsignal(selected_signal)
+                for selected_signal in cancellation_signals
+            }
+            effects: list[str] = []
+            outcome: list[BaseException] = []
+            masks: list[set[signal.Signals]] = []
+            adapter = OneShotCustodyAdapter(command, environment=environment)
+
+            def forbid_effect(*_arguments: object, **_keywords: object) -> None:
+                effects.append("signal state or worker creation")
+                raise AssertionError("background unwrap reached operation state")
+
+            def invoke_from_background() -> None:
+                masks.append(real_pthread_sigmask(signal.SIG_BLOCK, set()))
+                try:
+                    adapter.unwrap(request_for())
+                except BaseException as exc:
+                    outcome.append(exc)
+                finally:
+                    masks.append(real_pthread_sigmask(signal.SIG_BLOCK, set()))
+
+            fido_custody.subprocess.Popen = forbid_effect
+            fido_custody.signal.pthread_sigmask = forbid_effect
+            fido_custody.signal.getsignal = forbid_effect
+            fido_custody.signal.signal = forbid_effect
+            caller = threading.Thread(target=invoke_from_background)
+            try:
+                caller.start()
+                caller.join(timeout=2.0)
+            finally:
+                fido_custody.subprocess.Popen = real_popen
+                fido_custody.signal.pthread_sigmask = real_pthread_sigmask
+                fido_custody.signal.getsignal = real_getsignal
+                fido_custody.signal.signal = real_signal
+
+            observed_handlers = {
+                selected_signal: real_getsignal(selected_signal)
+                for selected_signal in cancellation_signals
+            }
+            require(not caller.is_alive(), f"{label} background unwrap did not return")
+            require(
+                not effects,
+                f"{label} background unwrap reached signal state or worker creation",
+            )
+            require(
+                len(outcome) == 1 and isinstance(outcome[0], CustodyError),
+                f"{label} background unwrap did not return CustodyError",
+            )
+            require(
+                len(masks) == 2 and masks[0] == masks[1],
+                f"{label} background unwrap changed its caller signal mask",
+            )
+            require(
+                observed_handlers == expected_handlers,
+                f"{label} background unwrap changed cancellation dispositions",
+            )
+    finally:
+        fido_custody.subprocess.Popen = real_popen
+        fido_custody.signal.pthread_sigmask = real_pthread_sigmask
+        fido_custody.signal.getsignal = real_getsignal
+        fido_custody.signal.signal = real_signal
+        for selected_signal, handler in original_handlers.items():
+            real_signal(selected_signal, handler)
 
 
 def check_startup_interruption_owns_worker(
@@ -1322,6 +1510,7 @@ def main() -> None:
         }
         adapter = OneShotCustodyAdapter(command, environment=environment)
         check_startup_interruption_owns_worker(command, environment)
+        check_background_unwrap_rejected(command, environment)
         check_threaded_startup_cancellation_owns_worker(
             command,
             {
@@ -1353,6 +1542,7 @@ def main() -> None:
             pin_adapter.unwrap(request_for("pin")).evidence.uv_mode == "pin",
             "PIN UV mode was not recorded",
         )
+        check_resource_limit_validation(command, environment)
 
         duplex_envelope = b"duplex\n" + (b"x" * (1 << 18))
         duplex_request = CustodyRequest(

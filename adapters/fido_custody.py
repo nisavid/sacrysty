@@ -14,14 +14,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import selectors
 import signal
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from numbers import Real
 from types import FrameType
 from typing import BinaryIO
 
@@ -252,6 +255,19 @@ def _propagate_cancellation(
     raise CustodyError("worker interrupted")
 
 
+def _normalize_timeout_seconds(timeout_seconds: object) -> float:
+    diagnostic = "timeout must be a finite positive real number"
+    if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, Real):
+        raise ValueError(diagnostic)
+    try:
+        normalized_timeout = float(timeout_seconds)
+    except (OverflowError, TypeError, ValueError):
+        raise ValueError(diagnostic) from None
+    if not math.isfinite(normalized_timeout) or normalized_timeout <= 0:
+        raise ValueError(diagnostic)
+    return normalized_timeout
+
+
 class OneShotCustodyAdapter:
     """Run one external unwrap operation and then discard its process."""
 
@@ -259,24 +275,30 @@ class OneShotCustodyAdapter:
         self,
         command: Sequence[str],
         *,
-        timeout_seconds: float = 5.0,
+        timeout_seconds: Real = 5.0,
         max_envelope_bytes: int = 1 << 20,
         max_output_bytes: int = 1 << 20,
         environment: Mapping[str, str] | None = None,
     ) -> None:
         if not command or any(not part for part in command):
             raise ValueError("worker command must be non-empty")
-        if timeout_seconds <= 0:
-            raise ValueError("timeout must be positive")
-        if max_envelope_bytes <= 0 or max_output_bytes <= 0:
-            raise ValueError("I/O limits must be positive")
+        normalized_timeout = _normalize_timeout_seconds(timeout_seconds)
+        if (
+            type(max_envelope_bytes) is not int
+            or max_envelope_bytes <= 0
+            or type(max_output_bytes) is not int
+            or max_output_bytes <= 0
+        ):
+            raise ValueError("I/O limits must be positive integers")
         self._command = tuple(command)
-        self._timeout_seconds = timeout_seconds
+        self._timeout_seconds = normalized_timeout
         self._max_envelope_bytes = max_envelope_bytes
         self._max_output_bytes = max_output_bytes
         self._environment = _scrub_environment(environment)
 
     def unwrap(self, request: CustodyRequest) -> CustodyResult:
+        if threading.current_thread() is not threading.main_thread():
+            raise CustodyError("unwrap requires the main thread")
         if not request.envelope:
             raise CustodyError("empty envelope")
         if len(request.envelope) > self._max_envelope_bytes:
