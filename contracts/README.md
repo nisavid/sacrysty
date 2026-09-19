@@ -3,6 +3,9 @@
 This directory is reserved for normative contracts after their owning design
 work settles them.
 
-No schema, canonicalization rule, lifecycle rule, extension model, authority
-semantic, custody model, protocol identifier, or wire format has been accepted
-in this repository. No contract source has been materialized yet.
+The [public domain model](domain-model.md) and its
+[`public-record-envelope/v1`](schemas/public-record-envelope-v1.schema.json)
+schema are the first accepted contract surface. They define public record
+ownership, versioned metadata, and an inert, namespaced extension container.
+Protocol, authority, custody, and wire-operation semantics remain with their
+owning Wayfinder decisions.

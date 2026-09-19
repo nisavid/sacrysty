@@ -8,3 +8,6 @@ The [implementation map](https://github.com/nisavid/sacrysty/issues/1), labelled
 relationships define the frontier. Claim a ticket by assigning it to the
 driving developer before work. Record a resolution comment, update the map's
 decision index when applicable, and close the ticket last.
+
+For genesis integration and downstream evidence handoffs, follow
+[genesis validation](genesis-validation.md) at the candidate's source revision.
