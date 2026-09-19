@@ -395,6 +395,8 @@ class OneShotCustodyAdapter:
             except ProcessGroupOwnershipLost as exc:
                 process_owned = False
                 raise CustodyError("worker ownership lost") from exc
+            except ProcessGroupError as exc:
+                raise CustodyError("worker cleanup failure") from exc
         except _CallerCancelled as exc:
             cancellation = exc
         finally:

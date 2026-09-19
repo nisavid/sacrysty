@@ -1007,6 +1007,78 @@ def check_cleanup_cancellation_arbitration(
     )
 
 
+def check_status_observation_failure_is_public_and_cleans_worker(
+    command: list[str], environment: dict[str, str]
+) -> None:
+    waitid_observations: list[tuple[int, int, int]] = []
+    cleanup_processes: list[subprocess.Popen[bytes]] = []
+    public_error: CustodyError | None = None
+    real_waitid = process_groups.os.waitid
+    real_terminate_and_reap = fido_custody._terminate_and_reap
+
+    def fail_one_status_observation(
+        id_type: int, process_group: int, options: int
+    ) -> os.waitid_result | None:
+        waitid_observations.append((id_type, process_group, options))
+        if len(waitid_observations) == 1:
+            raise OSError(errno.EIO, "constructed process leader status failure")
+        return real_waitid(id_type, process_group, options)
+
+    def observe_owned_cleanup(process: subprocess.Popen[bytes]) -> None:
+        cleanup_processes.append(process)
+        real_terminate_and_reap(process)
+
+    try:
+        process_groups.os.waitid = fail_one_status_observation
+        fido_custody._terminate_and_reap = observe_owned_cleanup
+        try:
+            OneShotCustodyAdapter(command, environment=environment).unwrap(request_for())
+        except CustodyError as exc:
+            public_error = exc
+        else:
+            raise AssertionError("status observation failure returned plaintext")
+    finally:
+        process_groups.os.waitid = real_waitid
+        fido_custody._terminate_and_reap = real_terminate_and_reap
+        for process in cleanup_processes:
+            if process.returncode is None:
+                real_terminate_and_reap(process)
+
+    require(public_error is not None, "status observation failure was not public")
+    require(
+        str(public_error) == "worker cleanup failure",
+        "status observation failure leaked a non-public diagnostic",
+    )
+    status_error = public_error.__cause__
+    require(
+        isinstance(status_error, process_groups.ProcessGroupError)
+        and not isinstance(status_error, process_groups.ProcessGroupOwnershipLost),
+        "status observation failure lost its generic process-group cause",
+    )
+    operating_system_error = status_error.__cause__
+    require(
+        isinstance(operating_system_error, OSError)
+        and not isinstance(operating_system_error, ChildProcessError)
+        and operating_system_error.errno == errno.EIO,
+        "status observation failure lost its operating-system cause",
+    )
+    require(
+        len(waitid_observations) >= 2
+        and waitid_observations[0][0] == os.P_PID
+        and waitid_observations[0][2] == os.WEXITED | os.WNOHANG | os.WNOWAIT,
+        "status observation control did not reach the real waitid seam once",
+    )
+    process_group = waitid_observations[0][1]
+    require(
+        [process.pid for process in cleanup_processes] == [process_group],
+        "status observation failure did not retain owned cleanup",
+    )
+    require(
+        not process_group_exists(process_group),
+        "status observation failure left its owned worker group present",
+    )
+
+
 def check_cleanup_signals_only_owned_process_group(
     command: list[str], environment: dict[str, str]
 ) -> None:
@@ -1523,6 +1595,9 @@ def main() -> None:
         )
         check_cleanup_cancellation_arbitration(command, environment)
         check_final_worker_environment(directory_path, command)
+        check_status_observation_failure_is_public_and_cleans_worker(
+            command, environment
+        )
         check_cleanup_signals_only_owned_process_group(command, environment)
         check_nonzero_group_signal_denial_requires_definitive_absence(
             command, environment
