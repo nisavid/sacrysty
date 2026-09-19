@@ -9,3 +9,4 @@ conformance/test-source-inventory.py
 conformance/test-probe-result.py
 conformance/test-strict-json.py
 conformance/test-check-conformance.py
+conformance/test-genesis-validation.py

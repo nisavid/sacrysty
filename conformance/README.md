@@ -33,6 +33,7 @@ Each check is also available separately:
 | `python3 conformance/check-probe-result.py <crypto-conformance\|signing-profile> <result.json> <revision>` | Captured crypto-probe JSON | Required result identity, source binding, profile result, diagnostics, and mandatory check values; no qualification beyond the admitted observation. |
 | `python3 conformance/test-probe-result.py` | Crypto-probe result admission behavior | Constructed complete, malformed, mismatched, abnormal-status, and false-check results; only verifier statuses 1 through 123 are rejection evidence. |
 | `python3 conformance/test-check-conformance.py` | Aggregate runner and admission order | Both real runner interfaces with value-free fake tools, plus source-inspection failures, result admission, startup and operational cancellation, delayed cleanup, missing receipts, and ordinary same-process-group cleanup. |
+| `python3 conformance/test-genesis-validation.py` | Documented genesis validation procedure | Exact Bash block with only its five placeholders replaced; disposable repositories and command substitutes exercise revision consistency, external evidence storage, and failure receipts. No real Cargo or crypto validation runs inside these tests. |
 
 The aggregate's internal synthetic-check sequence is defined once in
 `synthetic-checks.txt`. Every listed check runs in normal and optimized Python.
