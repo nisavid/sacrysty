@@ -54,11 +54,8 @@ Use the canonical `needs-triage`, `needs-info`, `ready-for-agent`,
 
 ## Git and validation
 
-This is a personal `nisavid` project. Use `Ivan D Vasin <ivan@nisavid.io>` for
-Git work and the `nisavid` GitHub account for repository mutations. Prefix
-branches with `ivan/`. Use Conventional Commits for commits and pull-request
-titles. Sign off every human-authored commit under the DCO with
-`git commit --signoff`.
+Use Conventional Commits for commits and pull-request titles. Sign off every
+human-authored commit under the DCO with `git commit --signoff`.
 
 Before committing or publishing, run:
 
