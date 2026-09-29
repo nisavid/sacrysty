@@ -1,0 +1,7 @@
+{
+  "record_type": "profile",
+  "schema_version": "io.nisavid.sacrysty.public-record/v1",
+  "record_id": "io.nisavid.sacrysty.profile:version-optional",
+  "publisher": "io.nisavid.sacrysty",
+  "body": {"fixture": "envelope-only"}
+}

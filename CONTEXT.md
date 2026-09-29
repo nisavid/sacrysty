@@ -18,7 +18,8 @@ Assign names only if and when those concepts need them.
 
 | Surface | Owner |
 | --- | --- |
-| Public contracts, implementation, adapter interfaces and maintained reference adapters, public profiles, fixtures, conformance, qualification records, documentation, governance, compatibility declarations, and releases | Sacrysty |
+| Generic cryptographic-operation contracts and implementation, adapter interfaces and maintained reference adapters, public profiles, value-free fixtures, cryptographic conformance, qualification records, documentation, governance, compatibility declarations, and Sacrysty releases | Sacrysty |
+| Release-authority, publication, verifier, and protocol contracts, plus executable release conformance | Codiquary |
 | Exact adopter locks, private or encrypted deployment bindings, real hosts and accounts, provider resources, opaque secret references, protected bootstrap state, ceremonies, production mutations, and acceptance evidence | The system user; Ivan's dotfiles are the first adopter |
 
 The earlier planning labels `crypto-ops` and Cryptosacristy refer to the same
@@ -28,13 +29,21 @@ Historical evidence remains unchanged.
 
 ## Current stage
 
-The repository contains governance and a non-operational Rust library build
-skeleton. The
+The repository contains governance, a non-operational Rust library, public-record
+envelope source, disposable crypto-tool probes, a signing profile, and a
+synthetic Python custody adapter. The
 [substrate decision](https://github.com/nisavid/sacrysty/issues/2#issuecomment-5568558765)
 selects one root Cargo package/library named `sacrysty`; `src/lib.rs` is empty
 apart from its documentation. There is no executable or public API. Add `sacryd`
 only when a concrete helper needs it; documentation does not depend on a CLI.
 
-Command grammar, schemas, authority semantics, custody model, and protocol
-implementation remain unsettled. No cryptographic-operations implementation,
-released package, private binding, or production state exists here.
+The public domain model defines the record envelope and inert extensions.
+Record-family body schemas are not supplied. Command grammar and generic
+cryptographic authority or custody behavior remain with their owning Sacrysty
+decisions. Codiquary owns release-authority, publication, verifier, protocol,
+and executable release-conformance semantics; Sacrysty may consume accepted
+Codiquary contracts but does not restate them. The conformance probes exercise
+only disposable inputs, and the adapter exercises synthetic workers. Genesis
+acceptance, hardware qualification, release publication, and private adoption
+remain separate. No released package, private binding, or production state
+exists here.

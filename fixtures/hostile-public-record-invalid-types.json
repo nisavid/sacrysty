@@ -1,0 +1,8 @@
+{
+  "record_type": "contract",
+  "schema_version": "io.nisavid.sacrysty.public-record/v1",
+  "record_id": "io.nisavid.sacrysty.contract:invalid-types",
+  "publisher": "io.nisavid.sacrysty",
+  "version": 1,
+  "body": {"name": "hostile"}
+}

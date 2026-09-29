@@ -1,0 +1,38 @@
+schema = "io.nisavid.sacrysty.crypto-fixture-cases/v1"
+
+[[case]]
+id = "rfc9580-detached-signature"
+status = "implemented"
+expected = "verify"
+evidence = "conformance/run-sq.sh"
+
+[[case]]
+id = "tampered-message"
+status = "implemented"
+expected = "reject"
+evidence = "conformance/run-sq.sh"
+
+[[case]]
+id = "tampered-signature"
+status = "implemented"
+expected = "reject"
+evidence = "conformance/run-sq.sh"
+
+[[case]]
+id = "wrong-certificate"
+status = "implemented"
+expected = "reject"
+evidence = "conformance/run-sq.sh"
+
+[[case]]
+id = "rfc9980-backend-capability"
+status = "implemented"
+expected = "unqualified-unless-positive-round-trip"
+evidence = "conformance/run-sq.sh"
+
+# These vectors are named so later profile and genesis work can add their
+# accepted wire fixtures without silently changing this tool-boundary slice.
+[[case]]
+id = "revoked-or-expired-certificate"
+status = "reserved"
+owner = "Sacrysty #13"

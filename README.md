@@ -1,15 +1,15 @@
 # Sacrysty
 
-Sacrysty is the planned public, independently versioned home of a reusable
+Sacrysty is the public, independently versioned home of a reusable
 cryptographic-operations product. Its public-facing operator is Sacrystan, and
 its prospective command is `sacryd`, pronounced “sacred.”
 
 > [!IMPORTANT]
-> This repository contains a non-operational Rust library build skeleton and a
-> value-free Python reference adapter. It has no Rust executable or public API,
-> cryptographic-operations implementation,
-> qualified runtime, protocol, schema, production authority, custody binding,
-> key, credential, provider binding, trusted deployment, or release.
+> This repository contains a non-operational Rust library, public-record
+> envelope source, disposable `sq`/`sqv` conformance probes, and a synthetic
+> Python custody adapter. Genesis integration is in progress. It has no Rust
+> executable or public API, accepted genesis closure, qualified custody
+> runtime, production authority, private deployment, or release.
 
 ## Current names and open choices
 
@@ -21,8 +21,11 @@ command will be added only when a concrete helper needs it. Documentation can
 be useful before a CLI exists.
 
 Background workers and published bodies of practice remain unnamed. The
-command grammar, schemas, authority semantics, custody model, and protocol
-implementation remain open for their owning Wayfinder work.
+public-record envelope schema is settled, but record-family body schemas are
+not supplied. Command grammar, authority semantics, custody behavior, and
+protocol implementation remain with their owning Wayfinder work. The
+[public domain model](contracts/domain-model.md) defines the envelope and inert
+extension boundary; it does not supply those operational contracts.
 
 ## Ownership boundary
 
@@ -44,10 +47,14 @@ personal surfaces.
 
 ## Repository layout
 
-- [`contracts/`](contracts/) is reserved for normative contracts and schemas.
+- [`contracts/`](contracts/) contains the public-record envelope and its
+  domain-model contract.
 - [`src/`](src/) contains the empty library for the single primary distribution.
 - [`adapters/`](adapters/) holds interfaces and maintained reference adapters
   only after a real seam is established.
+- [`sacrysty_runtime/`](sacrysty_runtime/) contains private Python lifecycle and
+  strict-decoding support shared by existing adapters and conformance checks;
+  it is not a public product API.
 - [`profiles/`](profiles/) holds public non-secret policy profiles.
 - [`fixtures/`](fixtures/) and [`conformance/`](conformance/) hold disposable
   examples and executable contract evidence.
@@ -80,6 +87,15 @@ architectures and records the actual compiler, OS, and native toolchain versions
 The empty test harness runs zero behavioral tests. These checks prove buildability
 and repository policy, not minimum-OS support, a protocol, release, custody path,
 authority, or deployment.
+
+The [conformance entrypoint](conformance/README.md) lists the public-record,
+crypto-tool, signing-profile, and synthetic custody checks. Their evidence has
+separate scopes; passing a fixture does not qualify hardware or an adopter.
+The [genesis input receipt](docs/provenance/genesis-inputs.md) identifies the
+source decisions and immutable revisions assembled for integration.
+The [operations boundaries](docs/explanation/operations-boundaries.md) explain
+the accepted threat and custody constraints and the separate Sacrysty/Codiquary
+ownership boundary.
 
 ## Project status
 

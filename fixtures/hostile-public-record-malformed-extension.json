@@ -1,0 +1,10 @@
+{
+  "record_type": "contract",
+  "schema_version": "io.nisavid.sacrysty.public-record/v1",
+  "record_id": "io.nisavid.sacrysty.contract:malformed-extension",
+  "publisher": "io.nisavid.sacrysty",
+  "body": {"name": "hostile"},
+  "extensions": {
+    "example.invalid.malformed": {"state": "inert", "criticality": "optional"}
+  }
+}
