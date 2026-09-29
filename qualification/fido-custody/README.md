@@ -16,8 +16,8 @@ worker, or any custody or production path.
   revision and direct runtime input digests, executes both direct checker modes,
   and emits the candidate-bound result.
 - [`test-run-synthetic-ci.sh`](test-run-synthetic-ci.sh) exercises the runner's
-  rejection and failure-propagation boundaries before the workflow relies on a
-  direct result.
+  import, result-invalidation, rejection, and failure-propagation boundaries
+  before the workflow relies on a direct result.
 
 The workflow and runner are the executable authority for the current source
 selection. The result emitted by a particular run records the implementation,
@@ -42,12 +42,47 @@ The expected SHA-256 values live in the runner and are copied into each emitted
 result. They are not repeated here so this entrypoint cannot become a competing
 input manifest.
 
+The frozen `adapters` and `conformance` directories have no
+`__init__.py`. The runner starts every Python helper and both checker modes
+with isolated, no-site startup. Its checker launcher binds those two namespace
+package search paths directly to their frozen directories, inserts the frozen
+source root ahead of the standard library paths, imports each executable
+project module, and verifies that every module file resolves to its declared
+path under that root before it runs the checker. `PYTHONPATH`, user-site
+packages, `sitecustomize`, and ambient regular packages therefore cannot
+replace the bound project modules.
+
 The workflow checks out its own implementation revision separately from the
 frozen source. It runs the behavioral harness, then the checker directly under
 normal and optimized Python, using external disposable storage with bytecode
 writes disabled. The result records both exits, source cleanliness before and
 after execution, runner and Python facts, and the workflow and source
 identities.
+
+## Result destination behavior
+
+A well-formed invocation with available prerequisites and an existing source
+directory canonicalizes the prospective result parent before creating it. A
+parent within the source checkout is rejected without creating, deleting, or
+changing a source path. After the parent is created, the runner canonicalizes
+and checks it again.
+
+Once that validation succeeds, the runner unlinks any existing non-directory
+entry at the result path before source identity, digest, cleanliness,
+architecture, hosted-runner, or implementation preflight. Unlinking replaces
+only the destination directory entry: symbolic links are not followed, and
+hard-link targets are not modified. A preflight failure after this point
+therefore cannot leave an older passing result at a supported reused
+destination. A completed attempt still replaces its result atomically through
+a same-directory temporary file.
+
+Wrong argument counts, unavailable commands, a missing source directory, an
+invalid result name, an uncreatable result parent, and an existing directory at
+the result path can fail before an old path is invalidated because the runner
+cannot establish or perform the safe file operation. The hosted workflow does
+not reuse such a path: it binds `RESULT_FILE` to the current job's
+`runner.temp` directory. Direct callers that reuse a destination must satisfy
+the validated invocation conditions above.
 
 ## Status and provenance
 
@@ -83,8 +118,8 @@ runtime closure, the workflow, runner, behavioral harness, Python runtime,
 platform, architecture, or runner image invalidates the affected result. A
 source correction requires the direct runtime closure to be established again,
 all changed identities to be rebound, fresh hosted evidence, and review of the
-same final tuple. The seven paths above must not be assumed to remain the closure
-of a later source.
+same final tuple. The seven paths above must not be assumed to remain the
+closure of a later source.
 
 ## Limits
 

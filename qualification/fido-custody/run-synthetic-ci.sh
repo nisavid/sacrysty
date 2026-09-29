@@ -2,14 +2,93 @@
 set -euo pipefail
 
 readonly expected_source_revision=a05ca4ca1d2deb49cd47842d24da7692cb0ae9bd
+readonly checker_launcher='import importlib
+import importlib.machinery
+import pathlib
+import runpy
+import sys
+import types
+
+root = pathlib.Path(sys.argv[1]).resolve()
+sys.path.insert(0, str(root))
+for package_name in ("adapters", "conformance"):
+    package_path = root / package_name
+    package_spec = importlib.machinery.ModuleSpec(
+        package_name,
+        loader=None,
+        is_package=True,
+    )
+    package_spec.submodule_search_locations = [str(package_path)]
+    package = types.ModuleType(package_name)
+    package.__package__ = package_name
+    package.__path__ = [str(package_path)]
+    package.__spec__ = package_spec
+    sys.modules[package_name] = package
+expected_modules = {
+    "adapters.fido_custody": "adapters/fido_custody.py",
+    "conformance.test_support": "conformance/test_support.py",
+    "sacrysty_runtime": "sacrysty_runtime/__init__.py",
+    "sacrysty_runtime.process_groups": "sacrysty_runtime/process_groups.py",
+    "sacrysty_runtime.strict_json": "sacrysty_runtime/strict_json.py",
+}
+for module_name, relative_path in expected_modules.items():
+    module = importlib.import_module(module_name)
+    module_file = getattr(module, "__file__", None)
+    if module_file is None:
+        raise RuntimeError(f"project module origin unavailable: {module_name}")
+    observed_path = pathlib.Path(module_file).resolve()
+    expected_path = (root / relative_path).resolve()
+    if observed_path != expected_path:
+        raise RuntimeError(
+            f"project module origin mismatch for {module_name}: "
+            f"expected {expected_path}, observed {observed_path}"
+        )
+runpy.run_path(
+    str(root / "conformance/check-fido-custody.py"),
+    run_name="__main__",
+)
+'
 
 hash_file() {
-  python3 -B - "$1" <<'PY'
+  python3 -I -S -B - "$1" <<'PY'
 import hashlib
 import pathlib
 import sys
 
 print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())
+PY
+}
+
+canonicalize_path() {
+  python3 -I -S -B - "$1" <<'PY'
+import pathlib
+import sys
+
+print(pathlib.Path(sys.argv[1]).resolve(strict=False))
+PY
+}
+
+invalidate_result_entry() {
+  python3 -I -S -B - "$1" <<'PY'
+import os
+import stat
+import sys
+
+result_path = sys.argv[1]
+try:
+    status = os.lstat(result_path)
+except FileNotFoundError:
+    raise SystemExit(0)
+if stat.S_ISDIR(status.st_mode):
+    print("result file path is an existing directory", file=sys.stderr)
+    raise SystemExit(1)
+try:
+    os.unlink(result_path)
+except FileNotFoundError:
+    pass
+except IsADirectoryError:
+    print("result file path is an existing directory", file=sys.stderr)
+    raise SystemExit(1)
 PY
 }
 
@@ -47,13 +126,48 @@ main() {
   local observed_source_revision source_status_before observed_arch
   local implementation_revision workflow_file workflow_file_digest preparation_digest
   local workflow_revision workflow_ref result_parent result_name
-  local resolved_result_parent resolved_result_file resolved_source_root
+  local prospective_result_parent resolved_result_parent resolved_result_file
+  local resolved_source_root
   local normal_exit optimized_exit source_status_after clean_after
 
   script_path=$(realpath -- "${BASH_SOURCE[0]}")
   script_directory=${script_path%/*}
   implementation_root=$(realpath -- "$script_directory/../..")
 
+  if [[ ! -d $source_root ]]; then
+    printf 'source root must name an existing directory\n' >&2
+    return 2
+  fi
+  resolved_source_root=$(cd "$source_root" && pwd -P)
+
+  if [[ $result_file == */* ]]; then
+    result_parent=${result_file%/*}
+  else
+    result_parent=.
+  fi
+  result_name=${result_file##*/}
+  if [[ -z $result_name || $result_name == . || $result_name == .. ]]; then
+    printf 'result file must name a file within its parent directory\n' >&2
+    exit 1
+  fi
+
+  prospective_result_parent=$(canonicalize_path "$result_parent")
+  if [[ $prospective_result_parent == "$resolved_source_root" ||
+    $prospective_result_parent == "$resolved_source_root"/* ]]; then
+    printf 'result storage must be outside the synthetic source checkout\n' >&2
+    exit 1
+  fi
+  mkdir -p "$result_parent"
+  resolved_result_parent=$(cd "$result_parent" && pwd -P)
+  if [[ $resolved_result_parent == "$resolved_source_root" ||
+    $resolved_result_parent == "$resolved_source_root"/* ]]; then
+    printf 'result storage must be outside the synthetic source checkout\n' >&2
+    exit 1
+  fi
+  resolved_result_file="$resolved_result_parent/$result_name"
+  invalidate_result_entry "$resolved_result_file"
+
+  source_root=$resolved_source_root
   observed_source_revision=$(git -C "$source_root" rev-parse --verify "HEAD^{commit}")
   if [[ $observed_source_revision != "$expected_source_revision" ]]; then
     printf 'source revision mismatch: expected %s, observed %s\n' \
@@ -125,31 +239,11 @@ main() {
     exit 1
   fi
 
-  if [[ $result_file == */* ]]; then
-    result_parent=${result_file%/*}
-  else
-    result_parent=.
-  fi
-  result_name=${result_file##*/}
-  if [[ -z $result_name || $result_name == . || $result_name == .. ]]; then
-    printf 'result file must name a file within its parent directory\n' >&2
-    exit 1
-  fi
-  mkdir -p "$result_parent"
-  resolved_result_parent=$(cd "$result_parent" && pwd -P)
-  resolved_result_file="$resolved_result_parent/$result_name"
-  resolved_source_root=$(cd "$source_root" && pwd -P)
-  if [[ $resolved_result_parent == "$resolved_source_root" ||
-    $resolved_result_parent == "$resolved_source_root"/* ]]; then
-    printf 'result storage must be outside the synthetic source checkout\n' >&2
-    exit 1
-  fi
-
   export PYTHONDONTWRITEBYTECODE=1
   set +e
-  python3 -B "$source_root/conformance/check-fido-custody.py"
+  python3 -I -S -B -c "$checker_launcher" "$source_root"
   normal_exit=$?
-  python3 -B -O "$source_root/conformance/check-fido-custody.py"
+  python3 -I -S -B -O -c "$checker_launcher" "$source_root"
   optimized_exit=$?
   set -e
 
@@ -160,7 +254,7 @@ main() {
     clean_after=false
   fi
 
-  python3 -B - \
+  python3 -I -S -B - \
     "$resolved_result_file" \
     "$workflow_revision" \
     "$workflow_ref" \
