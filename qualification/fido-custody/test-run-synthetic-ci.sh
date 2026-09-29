@@ -11,7 +11,7 @@ test_source_identity_rejection() {
     return 1
   fi
   grep -F \
-    'source revision mismatch: expected 45e1e8ca1388ddf029671460fd6e649d29289c1b' \
+    'source revision mismatch: expected a05ca4ca1d2deb49cd47842d24da7692cb0ae9bd' \
     "$output_file" >/dev/null
 }
 
@@ -160,7 +160,7 @@ assert set(result["source"]["sha256"]) == expected_inputs
 for relative_path in expected_inputs:
     expected_digest = hashlib.sha256((source_root / relative_path).read_bytes()).hexdigest()
     assert result["source"]["sha256"][relative_path] == expected_digest
-assert result["source"]["revision"] == "45e1e8ca1388ddf029671460fd6e649d29289c1b"
+assert result["source"]["revision"] == "a05ca4ca1d2deb49cd47842d24da7692cb0ae9bd"
 assert result["outcome"] == "passed"
 assert result["candidate_bound"] is True
 assert result["provisional"] is True

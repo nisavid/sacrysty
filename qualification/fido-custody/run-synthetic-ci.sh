@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly expected_source_revision=45e1e8ca1388ddf029671460fd6e649d29289c1b
+readonly expected_source_revision=a05ca4ca1d2deb49cd47842d24da7692cb0ae9bd
 readonly expected_public_inputs_manifest=4fa2c5ba1f9795c9c6fb63f11e342702e6e22cd3225d94ad8dd4a8130685a574
 readonly expected_primary_sources_manifest=7d20b934f9c5acda27e914336db0e01eed8693bf5253e8f42104f3df75214e8e
 
@@ -66,9 +66,9 @@ main() {
   verify_digest adapters/fido-custody-v1.md \
     3a2a8c4262c1a1876a596f9032b71bf9c7f4e08bb786c8eb980c8d691f71ad3c
   verify_digest adapters/fido_custody.py \
-    06e3f7a4bb2b6f8b601d376bf64fc780c8cdbd78cd8b74c8bcb43e19c4330892
+    93ad77be96df82d69f79d2016dcbaa2e113e34c24097776ac3c5d318d4b87eb7
   verify_digest conformance/check-fido-custody.py \
-    432713aaaa77c44f6aeb414e291147eb593d0112ea6876a295a9a04953d3159a
+    1018646728e43f14f566c06efc1e89789d93e81bbd913d94a356579fc463f571
   verify_digest conformance/test_support.py \
     53f8a6c30422031342ed47215ac5d9b91c0f1ab8d55defc306fdeb28e3cd1692
   verify_digest sacrysty_runtime/__init__.py \
@@ -224,8 +224,8 @@ record = {
         "clean_after": clean_after,
         "sha256": {
             "adapters/fido-custody-v1.md": "3a2a8c4262c1a1876a596f9032b71bf9c7f4e08bb786c8eb980c8d691f71ad3c",
-            "adapters/fido_custody.py": "06e3f7a4bb2b6f8b601d376bf64fc780c8cdbd78cd8b74c8bcb43e19c4330892",
-            "conformance/check-fido-custody.py": "432713aaaa77c44f6aeb414e291147eb593d0112ea6876a295a9a04953d3159a",
+            "adapters/fido_custody.py": "93ad77be96df82d69f79d2016dcbaa2e113e34c24097776ac3c5d318d4b87eb7",
+            "conformance/check-fido-custody.py": "1018646728e43f14f566c06efc1e89789d93e81bbd913d94a356579fc463f571",
             "conformance/test_support.py": "53f8a6c30422031342ed47215ac5d9b91c0f1ab8d55defc306fdeb28e3cd1692",
             "sacrysty_runtime/__init__.py": "9a544524cda604a26f6451e1f81c14450d6e027487c5b6ee02401dfd24b8acf0",
             "sacrysty_runtime/process_groups.py": "024fe15f456e884b0be14060b2b08dc1a7873eecbf3a2257a9b0e86a105a4662",

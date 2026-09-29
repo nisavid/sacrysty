@@ -26,7 +26,7 @@ workflow, source, runtime, exits, and limits that the run actually observed.
 ## Current source layer
 
 The current workflow freezes synthetic source revision
-[`45e1e8ca1388ddf029671460fd6e649d29289c1b`](https://github.com/nisavid/sacrysty/commit/45e1e8ca1388ddf029671460fd6e649d29289c1b).
+[`a05ca4ca1d2deb49cd47842d24da7692cb0ae9bd`](https://github.com/nisavid/sacrysty/commit/a05ca4ca1d2deb49cd47842d24da7692cb0ae9bd).
 The runner verifies the exact bytes of the current direct-FIDO runtime closure
 before execution:
 
@@ -56,14 +56,14 @@ selected. Current runs supersede only its source-selection and runtime-input
 layer; they do not rewrite that historical evidence or turn its preparation
 receipts into workflow inputs.
 
-The current source is a published candidate, not accepted genesis. A passing
-job is only a provisional observation of its bound tuple. The [source handoff](https://github.com/nisavid/sacrysty/pull/20#issuecomment-5743053390)
-binds the corrected source, clean source reviews, and its validation evidence.
+The current source is a candidate, not accepted genesis. A passing job is only
+a provisional observation of its bound tuple. The [genesis integration](https://github.com/nisavid/sacrysty/pull/20)
+owns source correction, review, and validation evidence.
 Qualification requires fresh hosted runs and whole-increment review of this
 runner and workflow bound to that source; source validation does not supply
 those downstream results.
 
-The maintained [genesis validation procedure](https://github.com/nisavid/sacrysty/blob/45e1e8ca1388ddf029671460fd6e649d29289c1b/docs/agents/genesis-validation.md)
+The maintained [genesis validation procedure](https://github.com/nisavid/sacrysty/blob/a05ca4ca1d2deb49cd47842d24da7692cb0ae9bd/docs/agents/genesis-validation.md)
 owns full source validation. This qualification runner invokes only the direct
 synthetic custody checker against its separately frozen input set. The checker
 uses the native C compiler to build a disposable environment-observation
