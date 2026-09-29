@@ -2,8 +2,6 @@
 set -euo pipefail
 
 readonly expected_source_revision=a05ca4ca1d2deb49cd47842d24da7692cb0ae9bd
-readonly expected_public_inputs_manifest=4fa2c5ba1f9795c9c6fb63f11e342702e6e22cd3225d94ad8dd4a8130685a574
-readonly expected_primary_sources_manifest=7d20b934f9c5acda27e914336db0e01eed8693bf5253e8f42104f3df75214e8e
 
 hash_file() {
   python3 -B - "$1" <<'PY'
@@ -47,7 +45,7 @@ main() {
   local expected_arch=$3
   local script_path script_directory implementation_root
   local observed_source_revision source_status_before observed_arch
-  local implementation_revision workflow_file workflow_file_digest
+  local implementation_revision workflow_file workflow_file_digest preparation_digest
   local workflow_revision workflow_ref result_parent result_name
   local resolved_result_parent resolved_result_file resolved_source_root
   local normal_exit optimized_exit source_status_after clean_after
@@ -114,6 +112,7 @@ main() {
     exit 1
   fi
   workflow_file_digest=$(hash_file "$workflow_file")
+  preparation_digest=$(hash_file "$script_directory/preparation-2026-09-16.md")
   workflow_revision=${SACRYSTY_WORKFLOW_SHA:-$implementation_revision}
   workflow_ref=${SACRYSTY_WORKFLOW_REF:-local}
   if [[ -n ${SACRYSTY_WORKFLOW_SHA:-} && $implementation_revision != "$workflow_revision" ]]; then
@@ -173,8 +172,7 @@ main() {
     "$normal_exit" \
     "$optimized_exit" \
     "$clean_after" \
-    "$expected_public_inputs_manifest" \
-    "$expected_primary_sources_manifest" <<'PY'
+    "$preparation_digest" <<'PY'
 import hashlib
 import json
 import os
@@ -195,8 +193,7 @@ import tempfile
     normal_exit,
     optimized_exit,
     clean_after,
-    public_inputs_manifest,
-    primary_sources_manifest,
+    preparation_digest,
 ) = sys.argv[1:]
 
 normal_exit = int(normal_exit)
@@ -233,9 +230,10 @@ record = {
         },
     },
     "preparation_receipts": {
-        "public_inputs_manifest_sha256": public_inputs_manifest,
-        "primary_sources_manifest_sha256": primary_sources_manifest,
-        "scope": "Referenced from the reviewed preparation; manifest bytes are not workflow inputs.",
+        "file": "qualification/fido-custody/preparation-2026-09-16.md",
+        "file_sha256": preparation_digest,
+        "historical_manifest_bytes": "unavailable",
+        "scope": "Primary-source URLs and captured file identities are retained in the preparation report at the implementation revision. Historical cache manifests are unavailable; no manifest verification is claimed.",
     },
     "checks": {
         "normal_exit": normal_exit,

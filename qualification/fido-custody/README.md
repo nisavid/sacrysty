@@ -56,6 +56,13 @@ selected. Current runs supersede only its source-selection and runtime-input
 layer; they do not rewrite that historical evidence or turn its preparation
 receipts into workflow inputs.
 
+Each result identifies the preserved preparation report by repository path and
+SHA-256 at its recorded implementation revision. That report retains the public
+source URLs, immutable source references, and captured Typage file digests used
+during preparation. The original temporary public-input and external-source
+cache manifests are unavailable. Current results do not claim to verify those
+manifests or repeat the historical source retrieval.
+
 The current source is a candidate, not accepted genesis. A passing job is only
 a provisional observation of its bound tuple. The [genesis integration](https://github.com/nisavid/sacrysty/pull/20)
 owns source correction, review, and validation evidence.

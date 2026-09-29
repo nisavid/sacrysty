@@ -168,6 +168,13 @@ assert result["checks"] == {"normal_exit": 0, "optimized_exit": 0}
 assert result["source"]["clean_before"] is True
 assert result["source"]["clean_after"] is True
 assert result["workflow"]["file_sha256"] == expected_workflow_digest
+preparation = result["preparation_receipts"]
+assert preparation["file"] == "qualification/fido-custody/preparation-2026-09-16.md"
+preparation_path = workflow_path.parents[2] / preparation["file"]
+assert preparation["file_sha256"] == hashlib.sha256(preparation_path.read_bytes()).hexdigest()
+assert preparation["historical_manifest_bytes"] == "unavailable"
+assert "public_inputs_manifest_sha256" not in preparation
+assert "primary_sources_manifest_sha256" not in preparation
 assert result["runner"]["observed_architecture"] == result["runner"]["expected_architecture"]
 assert result["python"]["implementation"]
 assert result["python"]["version"]
