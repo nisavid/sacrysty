@@ -439,17 +439,25 @@ class AggregateConformanceTests(unittest.TestCase):
         """Make mandatory runner finalization prove it does not rely on EXIT."""
 
         runtime = pathlib.Path(environment["TEST_RUNTIME"])
+        suppression_marker = runtime / "runner-exit-fallback-suppressed"
         hook = runtime / "suppress-runner-exit-fallback.bash"
         hook.write_text(
+            "RUNNER_EXIT_FALLBACK_SUPPRESSED="
+            f"{shlex.quote(str(suppression_marker))}\n"
             r"""suppress_runner_exit_fallback() {
-  case ${BASH_COMMAND:-} in
+  local command=$1
+  case $command in
     'trap sq_evidence_interrupt_runner TERM' | 'trap interrupt_runner TERM')
       builtin trap - EXIT
+      : >"$RUNNER_EXIT_FALLBACK_SUPPRESSED"
       builtin trap - DEBUG
       ;;
   esac
 }
-builtin trap suppress_runner_exit_fallback DEBUG
+runner_instrumentation_debug_dispatcher() {
+  suppress_runner_exit_fallback "$1"
+}
+builtin trap 'runner_instrumentation_debug_dispatcher "$BASH_COMMAND"' DEBUG
 """,
             encoding="utf-8",
         )
@@ -466,6 +474,10 @@ builtin trap suppress_runner_exit_fallback DEBUG
             f'exec {shlex.quote(str(real_bash))} "$@"\n',
         )
         environment["PATH"] = f"{wrapper.parent}{os.pathsep}{environment['PATH']}"
+        environment["BASH_ENV"] = str(hook)
+        environment["RUNNER_EXIT_FALLBACK_SUPPRESSED"] = str(
+            suppression_marker
+        )
 
     def suppress_runner_finalization(self, environment: dict[str, str]) -> None:
         """Construct missing cleanup so its bounded lifecycle trace is observable."""
@@ -490,9 +502,34 @@ builtin trap suppress_runner_exit_fallback DEBUG
         path_log = runtime / "actual-runner-paths.log"
         observation_log = runtime / "actual-runner-cleanup-observations.log"
         observation_failure = runtime / "actual-runner-cleanup-observation.failed"
-        hook = runtime / "observe-actual-runner-cleanup.bash"
+        observer_active = runtime / "actual-runner-cleanup-observer.active"
+        observation_boundary = runtime / "actual-runner-cleanup-observation.boundary"
+        suppress_exit_fallback = "RUNNER_EXIT_FALLBACK_SUPPRESSED" in environment
+        hook = (
+            pathlib.Path(environment["BASH_ENV"])
+            if suppress_exit_fallback
+            else runtime / "observe-actual-runner-cleanup.bash"
+        )
+        suppression_definition = ""
+        if suppress_exit_fallback:
+            suppression_definition = (
+                "RUNNER_EXIT_FALLBACK_SUPPRESSED="
+                f"{shlex.quote(environment['RUNNER_EXIT_FALLBACK_SUPPRESSED'])}\n"
+                r"""suppress_runner_exit_fallback() {
+  local command=$1
+  case $command in
+    'trap sq_evidence_interrupt_runner TERM' | 'trap interrupt_runner TERM')
+      builtin trap - EXIT
+      : >"$RUNNER_EXIT_FALLBACK_SUPPRESSED"
+      RUNNER_EXIT_FALLBACK_SUPPRESSION_COMPLETE=1
+      ;;
+  esac
+}
+"""
+            )
         hook.write_text(
-            "AGGREGATE_RUNNER_OBSERVATION_FAILURE="
+            suppression_definition
+            + "AGGREGATE_RUNNER_OBSERVATION_FAILURE="
             f"{shlex.quote(str(observation_failure))}\n"
             "AGGREGATE_RUNNER_OBSERVATION_LOG="
             f"{shlex.quote(str(observation_log))}\n"
@@ -500,7 +537,15 @@ builtin trap suppress_runner_exit_fallback DEBUG
             f"{shlex.quote(str(path_log))}\n"
             "AGGREGATE_RUNNER_RETAINED="
             f"{shlex.quote(retained_runner or '')}\n"
+            "AGGREGATE_RUNNER_OBSERVER_ACTIVE="
+            f"{shlex.quote(str(observer_active))}\n"
+            "AGGREGATE_RUNNER_OBSERVATION_BOUNDARY="
+            f"{shlex.quote(str(observation_boundary))}\n"
             r"""set -T
+if [[ -n ${SACRYSTY_RUNNER_CLEANUP_RECEIPT:-} ]]; then
+  : >"$AGGREGATE_RUNNER_OBSERVER_ACTIVE"
+fi
+
 mktemp() {
   local created
   local runner=
@@ -518,8 +563,9 @@ mktemp() {
 
 preserve_runner_cleanup_negative_control() {
   local candidate=
+  local command=$1
   local runner=
-  case ${BASH_COMMAND:-} in
+  case $command in
     'work_dir=')
       candidate=${work_dir:-}
       runner=run-sq
@@ -539,6 +585,7 @@ preserve_runner_cleanup_negative_control() {
 rm() {
   local target=${!#}
   if [[ ${target##*/} == sacrysty-conformance-results.* ]]; then
+    : >"$AGGREGATE_RUNNER_OBSERVATION_BOUNDARY"
     local failed=
     local observed=0
     local runner
@@ -564,7 +611,8 @@ rm() {
           >>"$AGGREGATE_RUNNER_OBSERVATION_LOG"
       done <"$AGGREGATE_RUNNER_PATH_LOG"
     fi
-    if ((observed == 0)); then
+    if ((observed == 0)) &&
+      [[ ! -e $AGGREGATE_RUNNER_OBSERVER_ACTIVE ]]; then
       : >"$AGGREGATE_RUNNER_OBSERVATION_FAILURE"
       printf 'runner cleanup observation recorded no work directories\n' >&2
       return 97
@@ -578,31 +626,53 @@ rm() {
   command rm "$@"
 }
 
-trap preserve_runner_cleanup_negative_control DEBUG
+runner_instrumentation_debug_dispatcher() {
+  if [[ -n ${RUNNER_EXIT_FALLBACK_SUPPRESSED:-} &&
+    -z ${RUNNER_EXIT_FALLBACK_SUPPRESSION_COMPLETE:-} ]]; then
+    suppress_runner_exit_fallback "$1"
+  fi
+  preserve_runner_cleanup_negative_control "$1"
+}
+trap 'runner_instrumentation_debug_dispatcher "$BASH_COMMAND"' DEBUG
 """,
             encoding="utf-8",
         )
-        real_bash = shutil.which("bash", path=environment["PATH"])
-        self.assertIsNotNone(real_bash)
-        wrapper = runtime / "bash-with-runner-cleanup-observer" / "bash"
-        write_executable(
-            wrapper,
-            "#!/bin/sh\n"
-            'if [ -z "${BASH_ENV:-}" ]; then\n'
-            f"  BASH_ENV={shlex.quote(str(hook))}\n"
-            "  export BASH_ENV\n"
-            "fi\n"
-            f'exec {shlex.quote(str(real_bash))} "$@"\n',
-        )
+        if not suppress_exit_fallback:
+            real_bash = shutil.which("bash", path=environment["PATH"])
+            self.assertIsNotNone(real_bash)
+            wrapper = runtime / "bash-with-runner-cleanup-observer" / "bash"
+            write_executable(
+                wrapper,
+                "#!/bin/sh\n"
+                'if [ -z "${BASH_ENV:-}" ]; then\n'
+                f"  BASH_ENV={shlex.quote(str(hook))}\n"
+                "  export BASH_ENV\n"
+                "fi\n"
+                f'exec {shlex.quote(str(real_bash))} "$@"\n',
+            )
+            environment["PATH"] = (
+                f"{wrapper.parent}{os.pathsep}{environment['PATH']}"
+            )
         environment.update(
             {
                 "AGGREGATE_RUNNER_OBSERVATION_FAILURE": str(observation_failure),
                 "AGGREGATE_RUNNER_OBSERVATION_LOG": str(observation_log),
                 "AGGREGATE_RUNNER_PATH_LOG": str(path_log),
+                "AGGREGATE_RUNNER_OBSERVER_ACTIVE": str(observer_active),
+                "AGGREGATE_RUNNER_OBSERVATION_BOUNDARY": str(observation_boundary),
                 "BASH_ENV": str(hook),
-                "PATH": f"{wrapper.parent}{os.pathsep}{environment['PATH']}",
             }
         )
+
+    def assert_actual_runner_cleanup_observer_active(
+        self, environment: dict[str, str]
+    ) -> None:
+        for name in (
+            "AGGREGATE_RUNNER_OBSERVER_ACTIVE",
+            "AGGREGATE_RUNNER_OBSERVATION_BOUNDARY",
+        ):
+            marker = pathlib.Path(environment[name])
+            self.assertTrue(marker.is_file(), f"{name} was not recorded")
 
     def read_actual_runner_paths(
         self, environment: dict[str, str]
@@ -635,6 +705,7 @@ trap preserve_runner_cleanup_negative_control DEBUG
     def assert_actual_runner_cleanup_observed(
         self, environment: dict[str, str], expected_runners: set[str]
     ) -> None:
+        self.assert_actual_runner_cleanup_observer_active(environment)
         paths = self.read_actual_runner_paths(environment)
         observations = self.read_actual_runner_cleanup_observations(environment)
         self.assertEqual(set(paths), expected_runners)
@@ -958,6 +1029,7 @@ trap aggregate_startup_barrier DEBUG
 
     def test_pre_result_cleanup_observer_rejects_runner_residue(self) -> None:
         repository, environment = self.make_actual_runner_repository()
+        self.suppress_runner_exit_fallback(environment)
         self.install_actual_runner_cleanup_observer(
             environment, retained_runner="run-sq"
         )
@@ -986,6 +1058,11 @@ trap aggregate_startup_barrier DEBUG
         self.assertEqual(len(retained_results), 1)
         self.assertTrue(paths["run-sq"][1].is_dir())
         self.assertIn(retained_results[0], paths["run-sq"][1].parents)
+        self.assertTrue(
+            pathlib.Path(
+                environment["RUNNER_EXIT_FALLBACK_SUPPRESSED"]
+            ).is_file()
+        )
 
     def test_actual_runner_failures_still_remove_disposable_material(self) -> None:
         for target in ("run-sq", "run-signing-profile"):
@@ -1142,11 +1219,38 @@ trap actual_probe_startup_barrier DEBUG
                         target, mode, observe_cleanup=True
                     )
 
+    def test_actual_runner_instrumentation_behaviors_compose(self) -> None:
+        repository, environment = self.make_actual_runner_repository()
+        self.suppress_runner_exit_fallback(environment)
+        self.install_actual_runner_cleanup_observer(environment)
+        self.set_actual_control(environment, "target", "run-sq")
+        self.set_actual_control(environment, "mode", "failure")
+
+        result = self.run_aggregate(repository, environment)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "classical key generation exited with status 70", result.stderr
+        )
+        self.assertNotIn("complete conformance checks passed", result.stdout)
+        self.assert_actual_runner_cleanup_observed(
+            environment, {"run-sq"}
+        )
+        suppression_marker = pathlib.Path(
+            environment["RUNNER_EXIT_FALLBACK_SUPPRESSED"]
+        )
+        self.assertTrue(
+            suppression_marker.is_file(),
+            "runner EXIT fallback suppression was not activated",
+        )
+        self.assert_result_directory_removed(environment)
+
     def test_actual_runner_error_and_signal_cleanup_precede_exit_fallback(
         self,
     ) -> None:
         repository, environment = self.make_actual_runner_repository()
         self.suppress_runner_exit_fallback(environment)
+        self.install_actual_runner_cleanup_observer(environment)
         environment["SQ"] = str(
             pathlib.Path(environment["TEST_RUNTIME"]) / "missing-sq"
         )
@@ -1156,12 +1260,18 @@ trap actual_probe_startup_barrier DEBUG
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("crypto-conformance probe exited with status 1", result.stderr)
         self.assertNotIn("complete conformance checks passed", result.stdout)
+        self.assert_actual_runner_cleanup_observer_active(environment)
+        self.assertFalse(
+            pathlib.Path(environment["AGGREGATE_RUNNER_PATH_LOG"]).exists(),
+            "missing-tool failure unexpectedly created runner material",
+        )
         self.assert_result_directory_removed(environment)
 
         for target in ("run-sq", "run-signing-profile"):
             with self.subTest(target=target, path="error"):
                 repository, environment = self.make_actual_runner_repository()
                 self.suppress_runner_exit_fallback(environment)
+                self.install_actual_runner_cleanup_observer(environment)
                 self.set_actual_control(environment, "target", target)
                 self.set_actual_control(environment, "mode", "failure")
 
@@ -1172,11 +1282,22 @@ trap actual_probe_startup_barrier DEBUG
                     "classical key generation exited with status 70", result.stderr
                 )
                 self.assertNotIn("complete conformance checks passed", result.stdout)
+                expected_runners = (
+                    {"run-sq"}
+                    if target == "run-sq"
+                    else {"run-sq", "run-signing-profile"}
+                )
+                self.assert_actual_runner_cleanup_observed(
+                    environment, expected_runners
+                )
                 self.assert_result_directory_removed(environment)
 
             with self.subTest(target=target, path="signal"):
                 self.assert_actual_runner_cancellation(
-                    target, "hang-ignore", suppress_exit_fallback=True
+                    target,
+                    "hang-ignore",
+                    suppress_exit_fallback=True,
+                    observe_cleanup=True,
                 )
 
     def test_missing_runner_receipt_fails_and_retains_result_storage(self) -> None:
