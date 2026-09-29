@@ -28,15 +28,18 @@ jobs:
             arch: x86_64
             runner_os: Linux
             runner_arch: X64
+            python_executable: /usr/bin/python3
           - id: macos-arm64
             runner: macos-15
             arch: arm64
             runner_os: macOS
             runner_arch: ARM64
+            python_executable: /opt/homebrew/bin/python3
     env:
       EXPECTED_ARCH: ${{ matrix.arch }}
       IMPLEMENTATION_ROOT: ${{ github.workspace }}/qualification-implementation
       SOURCE_ROOT: ${{ github.workspace }}/frozen-synthetic-source
+      TRUSTED_PYTHON_EXECUTABLE: ${{ matrix.python_executable }}
       SACRYSTY_EXPECTED_RUNNER_ARCH: ${{ matrix.runner_arch }}
       SACRYSTY_EXPECTED_RUNNER_OS: ${{ matrix.runner_os }}
       SACRYSTY_RUNNER_LABEL: ${{ matrix.runner }}
@@ -54,9 +57,20 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: nisavid/sacrysty
-          ref: a05ca4ca1d2deb49cd47842d24da7692cb0ae9bd
+          ref: 81896a0c9f0b5af4f8c7e69e7d48da34e8e91318
           path: frozen-synthetic-source
           persist-credentials: false
+
+      - name: Select the trusted native CPython executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          python_executable=$(realpath -- "$TRUSTED_PYTHON_EXECUTABLE")
+          if [[ ! -f $python_executable || ! -x $python_executable ]]; then
+            printf 'trusted native CPython executable is unavailable\n' >&2
+            exit 2
+          fi
+          printf 'PYTHON_EXECUTABLE=%s\n' "$python_executable" >> "$GITHUB_ENV"
 
       - name: Exercise candidate-bound runner behavior
         shell: bash
@@ -66,7 +80,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$TEST_TMPDIR"
           bash "$IMPLEMENTATION_ROOT/qualification/fido-custody/test-run-synthetic-ci.sh" \
-            "$SOURCE_ROOT"
+            "$SOURCE_ROOT" "$PYTHON_EXECUTABLE"
 
       - name: Run candidate-bound direct synthetic checks
         shell: bash
@@ -78,7 +92,7 @@ jobs:
           test "$IMPLEMENTATION_ROOT" != "$SOURCE_ROOT"
           mkdir -p "$TMPDIR" "${RESULT_FILE%/*}"
           bash "$IMPLEMENTATION_ROOT/qualification/fido-custody/run-synthetic-ci.sh" \
-            "$SOURCE_ROOT" "$RESULT_FILE" "$EXPECTED_ARCH"
+            "$SOURCE_ROOT" "$RESULT_FILE" "$EXPECTED_ARCH" "$PYTHON_EXECUTABLE"
 
       - name: Retain the value-free provisional result
         if: ${{ always() }}

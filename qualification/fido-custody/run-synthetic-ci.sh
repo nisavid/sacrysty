@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly expected_source_revision=a05ca4ca1d2deb49cd47842d24da7692cb0ae9bd
+readonly expected_source_revision=81896a0c9f0b5af4f8c7e69e7d48da34e8e91318
 readonly checker_launcher='import importlib
 import importlib.machinery
 import pathlib
@@ -50,7 +50,7 @@ runpy.run_path(
 '
 
 hash_file() {
-  python3 -I -S -B - "$1" <<'PY'
+  "$python_executable" -I -S -B - "$1" <<'PY'
 import hashlib
 import pathlib
 import sys
@@ -60,7 +60,7 @@ PY
 }
 
 canonicalize_path() {
-  python3 -I -S -B - "$1" <<'PY'
+  "$python_executable" -I -S -B - "$1" <<'PY'
 import pathlib
 import sys
 
@@ -69,7 +69,7 @@ PY
 }
 
 invalidate_result_entry() {
-  python3 -I -S -B - "$1" <<'PY'
+  "$python_executable" -I -S -B - "$1" <<'PY'
 import os
 import stat
 import sys
@@ -105,14 +105,64 @@ verify_digest() {
   fi
 }
 
+select_native_cpython() {
+  local requested=$1
+  local resolved magic
+
+  if [[ $requested != /* ]]; then
+    printf 'Python executable selection must be absolute\n' >&2
+    return 2
+  fi
+  if ! resolved=$(realpath -- "$requested"); then
+    printf 'Python executable selection cannot be resolved\n' >&2
+    return 2
+  fi
+  if [[ ! -f $resolved || ! -x $resolved ]]; then
+    printf 'Python executable selection must name an executable regular file\n' >&2
+    return 2
+  fi
+  if ! magic=$(LC_ALL=C od -An -N4 -tx1 "$resolved" | tr -d '[:space:]'); then
+    printf 'Python executable selection cannot be inspected\n' >&2
+    return 2
+  fi
+  case $magic in
+    7f454c46 | cafebabe | bebafeca | cafebabf | bfbafeca | feedface | cefaedfe | feedfacf | cffaedfe)
+      ;;
+    *)
+      printf 'selected Python executable must be a native ELF or Mach-O file\n' >&2
+      return 2
+      ;;
+  esac
+
+  if ! "$resolved" -I -S -B - "$resolved" <<'PY'; then
+import pathlib
+import platform
+import sys
+
+selected = pathlib.Path(sys.argv[1]).resolve(strict=True)
+invoked = pathlib.Path(sys.executable).resolve(strict=True)
+if platform.python_implementation() != "CPython":
+    raise RuntimeError("selected executable is not CPython")
+if invoked != selected:
+    raise RuntimeError(
+        f"selected executable identity mismatch: selected {selected}, invoked {invoked}"
+    )
+PY
+    printf 'selected native executable must directly identify as CPython\n' >&2
+    return 2
+  fi
+
+  printf '%s\n' "$resolved"
+}
+
 main() {
-  if (($# != 3)); then
-    printf 'usage: %s SOURCE_ROOT RESULT_FILE EXPECTED_ARCH\n' "$0" >&2
+  if (($# != 4)); then
+    printf 'usage: %s SOURCE_ROOT RESULT_FILE EXPECTED_ARCH PYTHON_EXECUTABLE\n' "$0" >&2
     return 2
   fi
 
   local prerequisite
-  for prerequisite in git mkdir python3 realpath uname; do
+  for prerequisite in git mkdir od realpath tr uname; do
     if ! command -v "$prerequisite" >/dev/null; then
       printf 'required command is unavailable: %s\n' "$prerequisite" >&2
       return 2
@@ -122,6 +172,7 @@ main() {
   local source_root=$1
   local result_file=$2
   local expected_arch=$3
+  local python_executable
   local script_path script_directory implementation_root
   local observed_source_revision source_status_before observed_arch
   local implementation_revision workflow_file workflow_file_digest preparation_digest
@@ -129,6 +180,10 @@ main() {
   local prospective_result_parent resolved_result_parent resolved_result_file
   local resolved_source_root
   local normal_exit optimized_exit source_status_after clean_after
+
+  if ! python_executable=$(select_native_cpython "$4"); then
+    return 2
+  fi
 
   script_path=$(realpath -- "${BASH_SOURCE[0]}")
   script_directory=${script_path%/*}
@@ -241,9 +296,9 @@ main() {
 
   export PYTHONDONTWRITEBYTECODE=1
   set +e
-  python3 -I -S -B -c "$checker_launcher" "$source_root"
+  "$python_executable" -I -S -B -c "$checker_launcher" "$source_root"
   normal_exit=$?
-  python3 -I -S -B -O -c "$checker_launcher" "$source_root"
+  "$python_executable" -I -S -B -O -c "$checker_launcher" "$source_root"
   optimized_exit=$?
   set -e
 
@@ -254,7 +309,7 @@ main() {
     clean_after=false
   fi
 
-  python3 -I -S -B - \
+  "$python_executable" -I -S -B - \
     "$resolved_result_file" \
     "$workflow_revision" \
     "$workflow_ref" \
@@ -266,6 +321,7 @@ main() {
     "$normal_exit" \
     "$optimized_exit" \
     "$clean_after" \
+    "$python_executable" \
     "$preparation_digest" <<'PY'
 import hashlib
 import json
@@ -287,8 +343,14 @@ import tempfile
     normal_exit,
     optimized_exit,
     clean_after,
+    python_executable,
     preparation_digest,
 ) = sys.argv[1:]
+
+selected_executable = pathlib.Path(python_executable)
+invoked_executable = pathlib.Path(sys.executable).resolve(strict=True)
+if invoked_executable != selected_executable:
+    raise RuntimeError("result emitter executable does not match the selected executable")
 
 normal_exit = int(normal_exit)
 optimized_exit = int(optimized_exit)
@@ -348,16 +410,18 @@ record = {
         "machine": platform.machine(),
     },
     "python": {
+        "executable": str(selected_executable),
         "implementation": platform.python_implementation(),
         "version": platform.python_version(),
         "version_detail": sys.version,
-        "executable_sha256": hashlib.sha256(pathlib.Path(sys.executable).read_bytes()).hexdigest(),
+        "executable_sha256": hashlib.sha256(selected_executable.read_bytes()).hexdigest(),
     },
     "limits": [
         "Synthetic workers only; no real JSON worker, age plugin, or age executable was selected or run.",
         "No native FIDO library, authenticator, PIN, biometric, provider, keychain, personal host, custody state, release signing, or production path was exercised.",
         "A passing result does not qualify genesis, a custody implementation, hardware, provider behavior, personal adoption, or production use.",
         "Local execution is not GitHub-hosted or macOS evidence.",
+        "The selected native CPython executable is trusted host/toolchain input; its native code is not attested or contained.",
         "A relevant source, workflow, runtime, platform, architecture, or runner-image change invalidates this result.",
     ],
 }
