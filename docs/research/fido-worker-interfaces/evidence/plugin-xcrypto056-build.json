@@ -1,0 +1,56 @@
+{
+  "name": "plugin-xcrypto056",
+  "started_at": "2026-09-30T07:15:35.580300+00:00",
+  "base_source": "typage-overlay",
+  "candidate_update": "golang.org/x/crypto v0.56.0",
+  "steps": [
+    {
+      "argv": [
+        "/usr/bin/go",
+        "mod",
+        "edit",
+        "-require=golang.org/x/crypto@v0.56.0"
+      ],
+      "returncode": 0,
+      "seconds": 0.004287545998522546,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "argv": [
+        "/usr/bin/go",
+        "mod",
+        "tidy"
+      ],
+      "returncode": 0,
+      "seconds": 0.5887481449972256,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "b435dbb85dd023481041a721cb0aa889066798d2568e3b224e525e19c5f5af9e"
+    },
+    {
+      "argv": [
+        "/usr/bin/go",
+        "build",
+        "-buildvcs=false",
+        "-trimpath",
+        "-o",
+        "research/build/plugin-xcrypto056",
+        "./fido2prf/cmd/age-plugin-fido2prf"
+      ],
+      "returncode": 0,
+      "seconds": 0.597847119999642,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "scope": "Disposable research build; no execution or artifact admission",
+  "changed_paths": [
+    "go.mod",
+    "go.sum"
+  ],
+  "go.mod_sha256": "c8847555b9e753a04314253632b55bcaa036d62f3c24c5e20594a48c0caeab66",
+  "go.sum_sha256": "7e89d50e12aa2baaf735a6ddd2119b9b39f8af31cae98c3b3aee9843be1bca98",
+  "artifact_sha256": "6bdd562b8adea968ab0026359cdf97901676ecc619024b54148f8e381d028733",
+  "build_info": "plugin-xcrypto056-artifact: go1.26.6-X:nodwarf5\n\tpath\tfilippo.io/typage/fido2prf/cmd/age-plugin-fido2prf\n\tmod\tfilippo.io/typage\t(devel)\t\n\tdep\tfilippo.io/age\tv1.3.2\th1:r6RSZLFSMm6rzKepZ7ZAYkKCu14f3/Me8c7uKYh7C8c=\n\tdep\tfilippo.io/hpke\tv0.4.0\th1:p575VVQ6ted4pL+it6M00V/f2qTZITO0zgmdKCkd5+A=\n\tdep\tgithub.com/keys-pub/go-libfido2\tv1.5.4-0.20250104233141-2534349bd685\th1:zSJ+NjvdW6SKXv9+EGfbaXYveyamZKw2SE2uJdURCMQ=\n\tdep\tgithub.com/pkg/errors\tv0.9.1\th1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=\n\tdep\tgolang.org/x/crypto\tv0.56.0\th1:GUh5Ii4J5jtcseSMiRqr1jXCNHoxjeV9Fmekc2oLy6Y=\n\tdep\tgolang.org/x/sys\tv0.47.0\th1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=\n\tdep\tgolang.org/x/term\tv0.45.0\th1:NwWyBmoJCbfTHpxrWoZ9C6/VxOf7ic219I8xZZFdrf0=\n\tbuild\t-buildmode=exe\n\tbuild\t-compiler=gc\n\tbuild\t-trimpath=true\n\tbuild\tCGO_ENABLED=1\n\tbuild\tGOARCH=amd64\n\tbuild\tGOEXPERIMENT=nodwarf5\n\tbuild\tGOOS=linux\n\tbuild\tGOAMD64=v1\n",
+  "finished_at": "2026-09-30T07:15:36.789889+00:00"
+}

@@ -1,0 +1,111 @@
+{
+  "acquired_at": "2026-09-30T07:17:31.313889+00:00",
+  "source_url": "https://api.osv.dev/v1/querybatch",
+  "request": {
+    "queries": [
+      {
+        "package": {
+          "name": "filippo.io/age",
+          "ecosystem": "Go"
+        },
+        "version": "v1.3.2"
+      },
+      {
+        "package": {
+          "name": "filippo.io/edwards25519",
+          "ecosystem": "Go"
+        },
+        "version": "v1.2.0"
+      },
+      {
+        "package": {
+          "name": "filippo.io/hpke",
+          "ecosystem": "Go"
+        },
+        "version": "v0.4.0"
+      },
+      {
+        "package": {
+          "name": "filippo.io/nistec",
+          "ecosystem": "Go"
+        },
+        "version": "v0.0.4"
+      },
+      {
+        "package": {
+          "name": "filippo.io/typage",
+          "ecosystem": "Go"
+        },
+        "version": "v0.3.1"
+      },
+      {
+        "package": {
+          "name": "github.com/keys-pub/go-libfido2",
+          "ecosystem": "Go"
+        },
+        "version": "v1.5.4-0.20250104233141-2534349bd685"
+      },
+      {
+        "package": {
+          "name": "github.com/pkg/errors",
+          "ecosystem": "Go"
+        },
+        "version": "v0.9.1"
+      },
+      {
+        "package": {
+          "name": "golang.org/x/crypto",
+          "ecosystem": "Go"
+        },
+        "version": "v0.56.0"
+      },
+      {
+        "package": {
+          "name": "golang.org/x/sys",
+          "ecosystem": "Go"
+        },
+        "version": "v0.47.0"
+      },
+      {
+        "package": {
+          "name": "golang.org/x/term",
+          "ecosystem": "Go"
+        },
+        "version": "v0.45.0"
+      }
+    ]
+  },
+  "response": {
+    "results": [
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {
+        "vulns": [
+          {
+            "id": "GO-2026-5932",
+            "modified": "2026-07-10T05:44:31.101996Z"
+          }
+        ]
+      },
+      {},
+      {}
+    ]
+  },
+  "response_sha256": "9b4ae0aa4de442fd00f63c267b71c60f8421dd17a3df2f51ee23dcc6603c34b0",
+  "scope": "Raw version-index lookup; no reachability, exploitability, suitability, or coverage conclusion. C toolchain and native libraries not covered by this Go module query.",
+  "derivation": {
+    "source_record_sha256": "42d801a7aeab5c9082e528ed6f6d8a5a97d6d0900abb064b9e35ff4f058fe4dc",
+    "retained": "Complete request and batch response; advisory narratives omitted, source URLs and raw record digests retained."
+  },
+  "advisory_sources": [
+    {
+      "url": "https://api.osv.dev/v1/vulns/GO-2026-5932",
+      "sha256": "af9a70a4b88f383bf3ad4142f2dc7ab4358551622d16c636eb1b05f34a3d3a32"
+    }
+  ]
+}

@@ -1,0 +1,83 @@
+{
+  "raw_output_sha256": "e1cf3a4e50c145553718480529c139791801be0a96ff10dd8165700dfab0ade0",
+  "selection": "All config, SBOM, finding and progress events, unchanged. Advisory bodies and unrelated database records are omitted; advisory identifiers in findings link to the primary database. No finding is omitted.",
+  "events": [
+    {
+      "config": {
+        "protocol_version": "v1.0.0",
+        "scanner_name": "govulncheck",
+        "scanner_version": "v1.8.0",
+        "db": "https://vuln.go.dev",
+        "db_last_modified": "2026-09-28T16:43:40Z",
+        "go_version": "go1.26.6-X:nodwarf5",
+        "scan_level": "symbol",
+        "scan_mode": "source"
+      }
+    },
+    {
+      "SBOM": {
+        "go_version": "go",
+        "modules": [
+          {
+            "path": "filippo.io/typage"
+          },
+          {
+            "path": "filippo.io/age",
+            "version": "v1.3.2"
+          },
+          {
+            "path": "filippo.io/hpke",
+            "version": "v0.4.0"
+          },
+          {
+            "path": "github.com/keys-pub/go-libfido2",
+            "version": "v1.5.4-0.20250104233141-2534349bd685"
+          },
+          {
+            "path": "github.com/pkg/errors",
+            "version": "v0.9.1"
+          },
+          {
+            "path": "golang.org/x/crypto",
+            "version": "v0.56.0"
+          },
+          {
+            "path": "golang.org/x/sys",
+            "version": "v0.47.0"
+          },
+          {
+            "path": "golang.org/x/term",
+            "version": "v0.45.0"
+          },
+          {
+            "path": "stdlib"
+          }
+        ],
+        "roots": [
+          "filippo.io/typage/fido2prf/cmd/age-plugin-fido2prf"
+        ]
+      }
+    },
+    {
+      "progress": {
+        "message": "Fetching vulnerabilities from the database..."
+      }
+    },
+    {
+      "progress": {
+        "message": "Checking the code against the vulnerabilities..."
+      }
+    },
+    {
+      "finding": {
+        "osv": "GO-2026-5932",
+        "trace": [
+          {
+            "module": "golang.org/x/crypto",
+            "version": "v0.56.0"
+          }
+        ]
+      }
+    }
+  ]
+}
