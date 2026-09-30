@@ -10,6 +10,8 @@ conformance changes, threat-model impact, and status.
   integration boundary and requires review and maintainer approval.
 - [ADR 0003](0003-maintained-dco-github-app.md) selects the maintained hosted
   DCO GitHub App for contribution enforcement.
+- [ADR 0004](0004-publisher-namespace.md) records the publisher namespace
+  relationship and requires threat-model review and maintainer approval.
 
 The provenance handoff links the pre-repository decisions that constrain this
 work.
