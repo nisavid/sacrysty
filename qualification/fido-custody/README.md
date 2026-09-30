@@ -10,6 +10,10 @@ worker, or any custody or production path.
   preparation record from that date. Its candidate revision and four-input
   inventory describe the source layer reviewed during preparation; they are
   historical and are not the inputs of the current workflow.
+- [`real-worker-preparation-2026-09-30.md`](real-worker-preparation-2026-09-30.md)
+  maps accepted real-worker requirements to producer inputs, possible platform
+  observations, and join and invalidation conditions. It is a requirement and
+  input inventory; it contains no real-worker execution or qualification result.
 - [The qualification workflow](../../.github/workflows/fido-custody-qualification.yml)
   selects the current CI implementation and frozen synthetic source.
 - [`run-synthetic-ci.sh`](run-synthetic-ci.sh) enforces the selected source
