@@ -1,0 +1,214 @@
+{
+  "repository": "FiloSottile/typage",
+  "commit": "38b8b10cb22409de0eaa8a617a01f16dc2e3f9f4",
+  "cutoff": "2026-09-30",
+  "hash_algorithm": "SHA-256",
+  "file_count": 41,
+  "files": [
+    {
+      "path": ".github/workflows/build.yml",
+      "sha256": "b56e62525e40007da9a3adac7a4c597c48ca364a3cc9c6179ee14e6ce6a78808",
+      "bytes": 3119
+    },
+    {
+      "path": ".github/workflows/test.yml",
+      "sha256": "67665aa8b2d2e691cdc883f49ce2ce96ad041bbfd169b0ecd6174a5a4f8c61f7",
+      "bytes": 2697
+    },
+    {
+      "path": ".gitignore",
+      "sha256": "e954b35d74ad57ab207523eed6966a830fb3df3405cc4c0ae70b9ba9f42bea96",
+      "bytes": 26
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "7a35097cb3513b9be9944396b920fe21cdd46f2d59d1f9aa494de45b943ca9af",
+      "bytes": 1458
+    },
+    {
+      "path": "README.md",
+      "sha256": "6115c1c177d6d456b67b2d888c1647f124306462f08f0f629fe161b371613c45",
+      "bytes": 10799
+    },
+    {
+      "path": "eslint.config.js",
+      "sha256": "9368b64de9fc974d5d35bb0b0491a5b4e2ef482c6904b8b0e626777b67e01277",
+      "bytes": 1913
+    },
+    {
+      "path": "fido2prf/cmd/age-plugin-fido2prf/main.go",
+      "sha256": "1af062b06b723a23b6c00b5d8bce6b40327ae8edaf402a3972c00803676a0b61",
+      "bytes": 1618
+    },
+    {
+      "path": "fido2prf/fido2prf.go",
+      "sha256": "776b865932881364cc284aa3ceed53ff0471e34217bb315195928475acfdb4b9",
+      "bytes": 7171
+    },
+    {
+      "path": "fido2prf/internal/ctap2cbor/cbor.go",
+      "sha256": "b08e3c7da223a3b71474c2d9415869a4a03f01f56003d720a24666b9f258dc0d",
+      "bytes": 2873
+    },
+    {
+      "path": "go.mod",
+      "sha256": "4157aa19c18f41ac7c95ec7808e1953aa22cc2f9bdaf2d5b188b42622d873b29",
+      "bytes": 321
+    },
+    {
+      "path": "go.sum",
+      "sha256": "63ab01719d10fecf5626828d90bcb220ad01fbfdde0b0eb96cecc6aa1fdb8c70",
+      "bytes": 2231
+    },
+    {
+      "path": "jsr.json",
+      "sha256": "c8753dee1fec62917521cbc98076a110ed5febc2cab3354b80c1d7063e0f2d75",
+      "bytes": 126
+    },
+    {
+      "path": "lib/armor.ts",
+      "sha256": "3361b902431b3acaff7b62085cc06f5b80d392695450bfe86d7a03bec7d3dd83",
+      "bytes": 2095
+    },
+    {
+      "path": "lib/cbor.ts",
+      "sha256": "e968575790236ab31754d37094c75989fda00c4a4485e8fdea7491dddbbaa91f",
+      "bytes": 4151
+    },
+    {
+      "path": "lib/format.ts",
+      "sha256": "e6daa4f24c1aa99761e807f5e44d2c6a5a4b0c69fc8e9d5903cf110c22e35663",
+      "bytes": 3656
+    },
+    {
+      "path": "lib/index.ts",
+      "sha256": "ff45888471573dde9d9cb5eaf3710998c51ae498f2447a55122c50a5f623ba1f",
+      "bytes": 15328
+    },
+    {
+      "path": "lib/io.ts",
+      "sha256": "7b5443f1dfafeb8126eb098f16a7a0fe07e2e29f49e4d28b1f016634f997b3b5",
+      "bytes": 3934
+    },
+    {
+      "path": "lib/recipients.ts",
+      "sha256": "5f6dac7d89cab8239c28077a289630732f9aab01c64badffd191bc7931a09e82",
+      "bytes": 17704
+    },
+    {
+      "path": "lib/stream.ts",
+      "sha256": "752dd468d43d772d0c95449c4ab9e9771a0f3b65e591927716e1bdbbadf1fbec",
+      "bytes": 4331
+    },
+    {
+      "path": "lib/webauthn.ts",
+      "sha256": "84ee13a9d525de7a6a1fc15f79e62b9a80711a9854ce257058a57a1d911af0d8",
+      "bytes": 13041
+    },
+    {
+      "path": "lib/x25519.ts",
+      "sha256": "37bc51e8504eef775fe271921080ad537be91e8db609d1692833489821b12077",
+      "bytes": 4000
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "00a495096a67dd3c5cc2b38bf7dc8f2b038057e360cb9a7d3d14dcecb3cdced8",
+      "bytes": 292010
+    },
+    {
+      "path": "package.json",
+      "sha256": "2f3b8be06de0b6c00139f51bb1085c368a2298b172ed63aa017ef75483a7987d",
+      "bytes": 2276
+    },
+    {
+      "path": "tests/examples/.gitignore",
+      "sha256": "9e86f117a7055b9ac673a878ebbeb37694d3ce1c64dd93866871a500451d96cf",
+      "bytes": 100
+    },
+    {
+      "path": "tests/examples/browser.html",
+      "sha256": "d278ab1d02351035e61fb014ab2123eaac1e4fea90dc9b7ff9a448fe614e002a",
+      "bytes": 545
+    },
+    {
+      "path": "tests/examples/browser.js",
+      "sha256": "97acbe31bcba1c244a7500794ca1022f48356496ba96446bb68050e77cefa79c",
+      "bytes": 1138
+    },
+    {
+      "path": "tests/examples/identity.js",
+      "sha256": "605ac8ecd0226ab2a90ca96b72da0b6e20e7634f633c80a33fd8b08a185570f7",
+      "bytes": 520
+    },
+    {
+      "path": "tests/examples/package.json",
+      "sha256": "095914856e840188eefb61d6b7f505fb15ed15a04eef59b42981b6dce6604a4e",
+      "bytes": 744
+    },
+    {
+      "path": "tests/examples/passphrase.js",
+      "sha256": "331607d8b3098c6863ebbbf5b1d3092ff8087fb50fc0b447c6fa32f07871940f",
+      "bytes": 480
+    },
+    {
+      "path": "tests/format.test.ts",
+      "sha256": "61e54fcc8ab7a98e2e1690072a6c0e1b07daa383bfdc0b780b87fb41621ab54f",
+      "bytes": 2063
+    },
+    {
+      "path": "tests/index.test.ts",
+      "sha256": "b7bdd94f4385c50ffc11e3f00ea79dac30c6f74830a18acfc89bcdf21cdd237a",
+      "bytes": 12651
+    },
+    {
+      "path": "tests/property.test.ts",
+      "sha256": "1f5be81b59cf80ba16ea136a5c14a2da70fae24adbd86852c49f72ef573c63df",
+      "bytes": 5136
+    },
+    {
+      "path": "tests/stream.test.ts",
+      "sha256": "d4970769fa81fbf2cc5e7dc0092ab4abdf3b70ce4029760a26f1bc13eaa63b37",
+      "bytes": 820
+    },
+    {
+      "path": "tests/testkit.test.ts",
+      "sha256": "70bac4716b817281df192f981e5a8a0a6d689b9c6ca80721c50b99c687e549ea",
+      "bytes": 8548
+    },
+    {
+      "path": "tests/x25519.bench.ts",
+      "sha256": "88823bcd797ac8826dea1e56cf84f80df1eaf3e3e1bca61e10b24137a21cc275",
+      "bytes": 1239
+    },
+    {
+      "path": "tsconfig.build.json",
+      "sha256": "63d0f9907895f876c88299a55444fa88d2b52d34fb7fa7df4b88a346ea572ca1",
+      "bytes": 360
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "469735ebe4e8bac8fbfe79ecefc44d9023180d66e40d258dab5f9cf4fa5ca205",
+      "bytes": 191
+    },
+    {
+      "path": "typedoc.json",
+      "sha256": "d3e94ff9f748f7978241403268921d2a81f324121e6df9557b0d5b1ea9987dd2",
+      "bytes": 194
+    },
+    {
+      "path": "vitest.config.ts",
+      "sha256": "938122ac029bf9764dd177cde42a428740b0620092ace37c19adb822eed8c9c2",
+      "bytes": 823
+    },
+    {
+      "path": "wwwdev/index.html",
+      "sha256": "9c2752c08e3e5097bd6667e20ad0e914055b9c5bb4907cfa90548c1f10ed5f99",
+      "bytes": 680
+    },
+    {
+      "path": "wwwdev/index.ts",
+      "sha256": "dd37fff11490938640df7a0edcfa46abada125e6f6ba89baa88d3cde742402e6",
+      "bytes": 237
+    }
+  ]
+}
