@@ -336,11 +336,28 @@ def extensions_admissible(record: object) -> bool:
     return True
 
 
+def publisher_namespace_admissible(record: object) -> bool:
+    """Require the record-ID qualifier to belong to its declared publisher."""
+
+    if not isinstance(record, dict):
+        return False
+    publisher = record.get("publisher")
+    record_id = record.get("record_id")
+    if not isinstance(publisher, str) or not isinstance(record_id, str):
+        return False
+    qualifier, separator, _local_id = record_id.partition(":")
+    return bool(separator) and (
+        qualifier == publisher or qualifier.startswith(publisher + ".")
+    )
+
+
 def envelope_admissible(record: object, *, schema: object = ENVELOPE_SCHEMA) -> bool:
     # No record-family body schemas are supplied. The checked-in schema enforces
     # only that body is an object; this checker does not consume that object.
-    return envelope_matches_schema(record, schema=schema) and extensions_admissible(
-        record
+    return (
+        envelope_matches_schema(record, schema=schema)
+        and publisher_namespace_admissible(record)
+        and extensions_admissible(record)
     )
 
 

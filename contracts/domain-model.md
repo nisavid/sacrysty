@@ -36,6 +36,22 @@ fields are `record_type`, `schema_version`, `record_id`, `publisher`, and
 `body`. `record_id` is publisher-qualified and stable for the record's
 identity; a changed body receives a new `content_digest` and version.
 
+`publisher` identifies the namespace owner. The qualifier before the colon in
+`record_id` must equal `publisher` or extend it at a dot boundary. For example,
+`io.nisavid.sacrysty:domain-model` and
+`io.nisavid.sacrysty.contract:domain-model` belong to publisher
+`io.nisavid.sacrysty`; `io.nisavid.sacrystyle:domain-model` does not.
+Redistribution without a publisher change preserves both fields. Publishing
+under another publisher requires a new record ID. This relationship checks
+identity consistency; it does not prove namespace control, signing authority,
+or release acceptance.
+
+The JSON Schema checks each field's type and grammar independently. It cannot
+compare the two field values under the supported structural schema subset.
+`envelope_admissible` applies the cross-field relationship after the schema
+check. A structural JSON Schema pass alone is therefore insufficient for
+envelope admission.
+
 The envelope is closed. Unknown top-level fields are rejected so a security or
 authority-relevant value cannot be smuggled through an older reader. The body
 is an object and is closed by its record-family schema.
@@ -72,6 +88,6 @@ conformance worker.
 ## Current implementation limit
 
 The checked-in genesis conformance checker validates only the public-record
-envelope. It requires `body` to be an object, but no record-family body schemas
-are supplied here, so envelope acceptance does not claim that a family body is
-closed, valid, or consumed.
+envelope, including publisher namespace consistency. It requires `body` to be
+an object, but no record-family body schemas are supplied here, so envelope
+acceptance does not claim that a family body is closed, valid, or consumed.
