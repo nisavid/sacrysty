@@ -401,7 +401,11 @@ class PublicRecordEnvelopeAdmissionTests(unittest.TestCase):
 
                     self.assertNotEqual(result.returncode, 0)
                     self.assertNotIn("conformance passed", result.stdout)
-                    self.assertIn("canonical envelope fixture", result.stderr)
+                    self.assertIn(
+                        "canonical envelope fixture rejected: "
+                        "public-record-canonical.json",
+                        result.stderr,
+                    )
 
 
 if __name__ == "__main__":
