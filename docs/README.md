@@ -14,6 +14,8 @@ that behavior; it does not redefine it. Executable examples should come from
   explains the settled threat and custody constraints and the separate
   Sacrysty/Codiquary ownership boundary.
 - `provenance/` records reviewed source evidence and ownership handoffs.
+- [FIDO worker interface research](research/fido-worker-interfaces.md) records
+  disposable CLI/plugin observations and inputs for the pending worker contract.
 
 `agents/dco-provisioning.md` is the single operating procedure for DCO
 provisioning, verification, migration, recovery, and rollback.

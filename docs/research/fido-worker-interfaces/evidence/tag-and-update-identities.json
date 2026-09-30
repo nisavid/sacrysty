@@ -1,0 +1,54 @@
+{
+  "observed_at": "2026-09-30T07:14:23.203965+00:00",
+  "tags": [
+    {
+      "repository": "FiloSottile/age",
+      "tag": "v1.3.2",
+      "commit": "b74dce4cdbe35b5e5f66c06d9612b72f89028758",
+      "tree": "0e8fc91341a5f9e2ad142e75a879d6f9431e37e9",
+      "ref_url": "https://api.github.com/repos/FiloSottile/age/git/refs/tags/v1.3.2",
+      "ref": {
+        "ref": "refs/tags/v1.3.2",
+        "node_id": "MDM6UmVmMTg3NDAzNjk5OnJlZnMvdGFncy92MS4zLjI=",
+        "url": "https://api.github.com/repos/FiloSottile/age/git/refs/tags/v1.3.2",
+        "object": {
+          "sha": "b74dce4cdbe35b5e5f66c06d9612b72f89028758",
+          "type": "commit",
+          "url": "https://api.github.com/repos/FiloSottile/age/git/commits/b74dce4cdbe35b5e5f66c06d9612b72f89028758"
+        }
+      },
+      "tag_objects": []
+    },
+    {
+      "repository": "FiloSottile/typage",
+      "tag": "v0.3.1",
+      "commit": "38b8b10cb22409de0eaa8a617a01f16dc2e3f9f4",
+      "tree": "32c74d41ad0d5140a0164775884932105a33b77f",
+      "ref_url": "https://api.github.com/repos/FiloSottile/typage/git/refs/tags/v0.3.1",
+      "ref": {
+        "ref": "refs/tags/v0.3.1",
+        "node_id": "REF_kwDOJ-1rLrByZWZzL3RhZ3MvdjAuMy4x",
+        "url": "https://api.github.com/repos/FiloSottile/typage/git/refs/tags/v0.3.1",
+        "object": {
+          "sha": "38b8b10cb22409de0eaa8a617a01f16dc2e3f9f4",
+          "type": "commit",
+          "url": "https://api.github.com/repos/FiloSottile/typage/git/commits/38b8b10cb22409de0eaa8a617a01f16dc2e3f9f4"
+        }
+      },
+      "tag_objects": []
+    }
+  ],
+  "update_candidate": {
+    "source_url": "https://proxy.golang.org/golang.org/x/crypto/@v/v0.56.0.info",
+    "info": {
+      "Version": "v0.56.0",
+      "Time": "2026-09-02T18:02:47Z",
+      "Origin": {
+        "VCS": "git",
+        "URL": "https://go.googlesource.com/crypto",
+        "Hash": "86efde54dc7069251a8b007026c500d28e4239ce",
+        "Ref": "refs/tags/v0.56.0"
+      }
+    }
+  }
+}

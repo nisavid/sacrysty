@@ -1,0 +1,21 @@
+{
+  "candidate": "age-xcrypto056",
+  "started_at": "2026-09-30T07:18:29.113608+00:00",
+  "finished_at": "2026-09-30T07:18:30.530242+00:00",
+  "seconds": 1.4166603319972637,
+  "argv": [
+    "govulncheck",
+    "-json",
+    "-scan=symbol",
+    "-db",
+    "https://vuln.go.dev",
+    "./cmd/age"
+  ],
+  "tool_sha256": "d88d7902934702e4ef34ee2b23d65825daec2e00893365c610f38ad181bfc602",
+  "candidate_build_receipt_sha256": "f27aeeee5d33afd37e25585dd779c70bd23b92f015c5697b4893d9458964b96b",
+  "returncode": 0,
+  "timed_out": false,
+  "stdout_sha256": "87abcbd1b2b6ddbd34ab4fee2249bfba51581159da6e16e94d0d8eb32c112ae0",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "scope": "Source symbol-scan output retained for specialist assessment; exit status is not a qualification result."
+}

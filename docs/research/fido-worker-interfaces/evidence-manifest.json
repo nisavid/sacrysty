@@ -1,0 +1,95 @@
+{
+  "scope": "Immutable input and value-free evidence inventory for bounded interface research; no runtime or custody qualification.",
+  "files": [
+    {
+      "path": "evidence/age-xcrypto056-build.json",
+      "bytes": 2611,
+      "sha256": "f27aeeee5d33afd37e25585dd779c70bd23b92f015c5697b4893d9458964b96b"
+    },
+    {
+      "path": "evidence/age-xcrypto056-go.mod",
+      "bytes": 426,
+      "sha256": "c993cee8e71eb01fb7b2e2994cf4f0c4f1181eea1ae5008d2d968b2c7e001b43"
+    },
+    {
+      "path": "evidence/age-xcrypto056-go.sum",
+      "bytes": 1483,
+      "sha256": "070290d7981323d6b300baed7d394d375d1a62e89d53f3626325c049b5bd7d15"
+    },
+    {
+      "path": "evidence/age-xcrypto056-govulncheck-receipt.json",
+      "bytes": 820,
+      "sha256": "3ff594a83a462a1758f2668c7c02aea99cbd05b8ed931c550d861239793e826b"
+    },
+    {
+      "path": "evidence/age-xcrypto056-scan-events.json",
+      "bytes": 1976,
+      "sha256": "e4f573d9dbc6ad947d1e2822311e4fcfbb8305f3872c405242dc6e32525d6b17"
+    },
+    {
+      "path": "evidence/fixed-plugin-linkage-metadata.json",
+      "bytes": 5442,
+      "sha256": "ab9eff8f46f652c22126f6186afcec76e5a95ebb8fa6692ec78218ddc25be92c"
+    },
+    {
+      "path": "evidence/govulncheck-tool.json",
+      "bytes": 1594,
+      "sha256": "00c64752dfde6743188c2385349c1c3b4c19dc92877813ff3e173c17b1348966"
+    },
+    {
+      "path": "evidence/interface-execution-receipt.json",
+      "bytes": 1127,
+      "sha256": "f1358999033aca2764eb1db2e5c937feb70a07b028bb9c001419b22e6540a733"
+    },
+    {
+      "path": "evidence/observations.json",
+      "bytes": 1021,
+      "sha256": "186a6c597d1e41122e86c7781f73b19a53f1a228f45636600833306fd8ba7044"
+    },
+    {
+      "path": "evidence/osv-query-results.json",
+      "bytes": 2634,
+      "sha256": "2a90399db09e6bef9422093ea62427d465fe6f8fac41eba19dc75c29163109a0"
+    },
+    {
+      "path": "evidence/plugin-xcrypto056-build.json",
+      "bytes": 2807,
+      "sha256": "09e06f7f89d630abcd44d541d63d8aaadb062d3eeaad403906d5b00e2b1bc930"
+    },
+    {
+      "path": "evidence/plugin-xcrypto056-go.mod",
+      "bytes": 335,
+      "sha256": "c8847555b9e753a04314253632b55bcaa036d62f3c24c5e20594a48c0caeab66"
+    },
+    {
+      "path": "evidence/plugin-xcrypto056-go.sum",
+      "bytes": 2320,
+      "sha256": "7e89d50e12aa2baaf735a6ddd2119b9b39f8af31cae98c3b3aee9843be1bca98"
+    },
+    {
+      "path": "evidence/plugin-xcrypto056-govulncheck-receipt.json",
+      "bytes": 847,
+      "sha256": "66b8ccf0f6018b88da0d5bbbbdf065f2bcdab260a41e35427d4423a6d0ce1080"
+    },
+    {
+      "path": "evidence/plugin-xcrypto056-scan-events.json",
+      "bytes": 2144,
+      "sha256": "0f13ba38058c4a17b715c2b799e4a62ad0b70b1b70fd55184e264ef61bb75394"
+    },
+    {
+      "path": "evidence/probe.py",
+      "bytes": 17169,
+      "sha256": "6c7471d9ed5f0c5323647d90b48da537c436486fad00c81177350c828b59caa6"
+    },
+    {
+      "path": "evidence/source-inputs.json",
+      "bytes": 1545,
+      "sha256": "84f0ab725509bcd1151345708a39bd42ebfc43f51f5f72a1f66cada38ae0dc01"
+    },
+    {
+      "path": "evidence/tag-and-update-identities.json",
+      "bytes": 1967,
+      "sha256": "df8012d964fc53b3e539e33f5c364f94343ead3f608c13eae33af4694feae286"
+    }
+  ]
+}

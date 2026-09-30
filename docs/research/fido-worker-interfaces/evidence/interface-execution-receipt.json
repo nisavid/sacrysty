@@ -1,0 +1,33 @@
+{
+  "started_at": "2026-09-30T07:47:03.401516+00:00",
+  "finished_at": "2026-09-30T07:47:03.522921+00:00",
+  "script_sha256": "6c7471d9ed5f0c5323647d90b48da537c436486fad00c81177350c828b59caa6",
+  "age_sha256": "c5f1e2cb2e7380db9e4554410224d6ad5c91c1119bf78ddf9f8902f3736a7674",
+  "argv": [
+    "/usr/bin/python3",
+    "probe.py",
+    "AGE_BINARY",
+    "FRESH_OUTPUT_DIR"
+  ],
+  "environment": {
+    "PATH": "/usr/bin:/bin",
+    "LC_ALL": "C",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "cwd": "empty workspace",
+  "new_session": true,
+  "stdin": "closed",
+  "stdout": "pipe",
+  "stderr": "pipe",
+  "returncode": 0,
+  "seconds": 0.12132000299607171,
+  "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stdout_bytes": 0,
+  "stderr_bytes": 0,
+  "output_files": [
+    "observations.json"
+  ],
+  "observations_sha256": "186a6c597d1e41122e86c7781f73b19a53f1a228f45636600833306fd8ba7044",
+  "scope": "Coordinator execution receipt, pending specialist adjudication; no real FIDO plugin or hardware executed."
+}

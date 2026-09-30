@@ -1,0 +1,32 @@
+{
+  "scope": "inert public source; no extraction or execution",
+  "sources": [
+    {
+      "repository": "FiloSottile/age",
+      "commit": "b74dce4cdbe35b5e5f66c06d9612b72f89028758",
+      "tree": "0e8fc91341a5f9e2ad142e75a879d6f9431e37e9",
+      "archive": "age-b74dce4cdbe35b5e5f66c06d9612b72f89028758.tar.gz",
+      "archive_sha256": "413d6841e156bb1fd9757453637873d70f856a77419b638d6c158983f8591c5a",
+      "bytes": 252621,
+      "public_url": "https://codeload.github.com/FiloSottile/age/legacy.tar.gz/b74dce4cdbe35b5e5f66c06d9612b72f89028758"
+    },
+    {
+      "repository": "FiloSottile/typage",
+      "commit": "38b8b10cb22409de0eaa8a617a01f16dc2e3f9f4",
+      "tree": "32c74d41ad0d5140a0164775884932105a33b77f",
+      "archive": "typage-38b8b10cb22409de0eaa8a617a01f16dc2e3f9f4.tar.gz",
+      "archive_sha256": "80ffb1a785b25ce854098b666efef983a5b55ad6febebdacf1c6ff72a3629fc8",
+      "bytes": 93582,
+      "public_url": "https://codeload.github.com/FiloSottile/typage/legacy.tar.gz/38b8b10cb22409de0eaa8a617a01f16dc2e3f9f4"
+    },
+    {
+      "repository": "keys-pub/go-libfido2",
+      "commit": "2534349bd68588bf8aa87fafa6e8679de00d714e",
+      "tree": "047ee20d8ff7748d4a4f843ce76682933cdab636",
+      "archive": "go-libfido2-2534349bd68588bf8aa87fafa6e8679de00d714e.tar.gz",
+      "archive_sha256": "02da33d853ab1f6b611e02b79d23ae7769dddddce19567d1fa7aa07d16c3eeea",
+      "bytes": 1651621,
+      "public_url": "https://codeload.github.com/keys-pub/go-libfido2/legacy.tar.gz/2534349bd68588bf8aa87fafa6e8679de00d714e"
+    }
+  ]
+}

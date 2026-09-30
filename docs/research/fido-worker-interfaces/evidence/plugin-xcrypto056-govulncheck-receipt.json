@@ -1,0 +1,21 @@
+{
+  "candidate": "plugin-xcrypto056",
+  "started_at": "2026-09-30T07:18:30.541848+00:00",
+  "finished_at": "2026-09-30T07:18:34.512460+00:00",
+  "seconds": 3.970634846999019,
+  "argv": [
+    "govulncheck",
+    "-json",
+    "-scan=symbol",
+    "-db",
+    "https://vuln.go.dev",
+    "./fido2prf/cmd/age-plugin-fido2prf"
+  ],
+  "tool_sha256": "d88d7902934702e4ef34ee2b23d65825daec2e00893365c610f38ad181bfc602",
+  "candidate_build_receipt_sha256": "09e06f7f89d630abcd44d541d63d8aaadb062d3eeaad403906d5b00e2b1bc930",
+  "returncode": 0,
+  "timed_out": false,
+  "stdout_sha256": "e1cf3a4e50c145553718480529c139791801be0a96ff10dd8165700dfab0ade0",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "scope": "Source symbol-scan output retained for specialist assessment; exit status is not a qualification result."
+}
