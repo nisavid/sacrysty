@@ -98,3 +98,36 @@ operational protocols. The synthetic custody adapter does not qualify an
 authenticator or plugin. Historical tool observations do not qualify the
 integration runtime. Renew the relevant checks and reviews on the final
 candidate, preserving each result's scope and limitations.
+
+## Published increments and remaining joins
+
+The original 35-entry inventory and four-producer source bundle above retain
+their original identities and scope. The later inputs below have separate
+publication and evidence records; this index does not add them to that bundle
+or convert their evidence into complete genesis acceptance.
+
+| Public increment | Published identity | Evidence and limits |
+| --- | --- | --- |
+| [Frozen synthetic CI](https://github.com/nisavid/sacrysty/pull/21) | `3cb793d2fee306df9b4960d5f9460b19d84eab85`; checked source `81896a0c9f0b5af4f8c7e69e7d48da34e8e91318` | The [real-worker preparation](../../qualification/fido-custody/real-worker-preparation-2026-09-30.md#evidence-already-held-with-its-original-limits) records the original candidate, merge and synthetic limits; it supplies no real-worker qualification. |
+| [FIDO interface research](https://github.com/nisavid/sacrysty/pull/31) | `f9294262c31f2588135792445bebdd2953b4d06d` | The [interface record](../research/fido-worker-interfaces.md) and its separate evidence manifest retain bounded research observations, not artifact admission or hardware qualification. |
+| [Generic FIDO plugin upstream baseline](https://github.com/nisavid/sacrysty/pull/32) | `04f081ebc37f9d3574d7af9e0bb246d645a39cf4` | The [upstream baseline](../research/fido-upstream-baseline.md) records 41 upstream source paths at Typage `38b8b10cb22409de0eaa8a617a01f16dc2e3f9f4`; its source manifest is distinct from the 35-entry genesis inventory. |
+| [Real-worker qualification preparation](https://github.com/nisavid/sacrysty/pull/33) | `26e664b68ac00c15f1979879987a57a86aaa52c9` | The [maintained inventory](../../qualification/fido-custody/real-worker-preparation-2026-09-30.md) records producer inputs and dependent joins. Its anchor remains `04f081ebc37f9d3574d7af9e0bb246d645a39cf4`; preparation is not execution. |
+| [Timeout-fixture correction](https://github.com/nisavid/sacrysty/pull/35) | `1fa60aad363c2a1c02fd72e51bdc71c73bca3466` | The correction is confined to the synthetic timeout fixture. It does not change production deadlines or resolve the subsequent macOS process-group cleanup cause. |
+| [Publisher namespace implementation](https://github.com/nisavid/sacrysty/pull/34) | `9232530a16413242ea28bfb417138637b24b9768`, tree `732b4037f0f0ada415950e8aeea55b1510fce323` | The published tree matches reviewed candidate `724fc4fb65fed50f09d93896b8d744779a3d5106`. [ADR 0004](../adr/0004-publisher-namespace.md) records scoped review and maintainer approval. Source-inventory checks and their regressions passed in normal and optimized Python, with repository-policy and whitespace checks, from a fresh shallow checkout of the published revision. This was not a complete genesis-validation invocation. |
+
+The [genesis validation procedure](../agents/genesis-validation.md) remains the
+consumer entrypoint. Final integration must join accepted contracts, every
+changed source and evidence input, executed validation receipts, independent
+review, applicable qualification, and required approval on the revision each
+consumer actually tests. Passing checks on an earlier candidate retain their
+original source identity; a matching tree does not relabel an executed receipt.
+
+[ADR 0002](../adr/0002-genesis-integration-boundary.md) leaves generic policy
+and registry behavior and family-body schemas with their owning decisions.
+The [operations boundary](../explanation/operations-boundaries.md) retains
+helper equivalence and complete reusable operational procedures with their
+owning decisions. Codiquary retains release/publication/verifier/protocol contracts;
+system users retain private ceremonies, deployment locks, and adoption.
+The [real-worker inventory](../../qualification/fido-custody/real-worker-preparation-2026-09-30.md)
+remains the producer-input checklist before dependent qualification. Broader
+genesis acceptance and downstream consumer acceptance remain open.
