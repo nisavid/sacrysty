@@ -36,6 +36,32 @@ class PublicRecordEnvelopeAdmissionTests(unittest.TestCase):
         candidate["body"] = {"unknown_family_field": {"not": "consumed"}}
         self.assertTrue(CHECKER.envelope_admissible(candidate))
 
+    def test_publisher_owns_record_id_namespace(self) -> None:
+        for publisher, qualifier, admitted in (
+            ("io.nisavid.sacrysty", "io.nisavid.sacrysty", True),
+            ("io.nisavid.sacrysty", "io.nisavid.sacrysty.contract", True),
+            ("io.nisavid.sacrysty", "example.invalid.contract", False),
+            ("io.nisavid.sacrysty", "io.nisavid.sacrystyle", False),
+            ("io.nisavid.sacrysty", "io.nisavid.sacrysty-contract", False),
+        ):
+            with self.subTest(publisher=publisher, qualifier=qualifier):
+                candidate = copy.deepcopy(CANONICAL)
+                candidate["publisher"] = publisher
+                candidate["record_id"] = qualifier + ":domain-model"
+                self.assertEqual(CHECKER.envelope_admissible(candidate), admitted)
+
+    def test_redistribution_preserves_identity_or_uses_new_record_id(self) -> None:
+        unchanged = copy.deepcopy(CANONICAL)
+        self.assertTrue(CHECKER.envelope_admissible(unchanged))
+
+        changed_publisher = copy.deepcopy(unchanged)
+        changed_publisher["publisher"] = "example.invalid"
+        self.assertTrue(CHECKER.envelope_matches_schema(changed_publisher))
+        self.assertFalse(CHECKER.envelope_admissible(changed_publisher))
+
+        changed_publisher["record_id"] = "example.invalid.contract:domain-model"
+        self.assertTrue(CHECKER.envelope_admissible(changed_publisher))
+
     def test_serialized_envelope_rejects_duplicate_members_at_any_depth(self) -> None:
         for label, serialized in (
             ("top level", b'{"body":{},"body":{}}'),
@@ -338,7 +364,7 @@ class PublicRecordEnvelopeAdmissionTests(unittest.TestCase):
         self.assertIn("public record envelope conformance passed", result.stdout)
         self.assertIn("family bodies not validated", result.stdout)
 
-    def test_optimized_checker_fails_when_a_control_fixture_is_invalid(self) -> None:
+    def test_checker_rejects_mismatched_canonical_fixture_in_both_modes(self) -> None:
         repository = CHECKER_PATH.parents[1]
         with external_temporary_directory(
             repository, prefix="sacrysty-domain-model-test-"
@@ -353,23 +379,33 @@ class PublicRecordEnvelopeAdmissionTests(unittest.TestCase):
                 repository / "contracts/schemas/public-record-envelope-v1.schema.json",
                 fixture_root / "contracts/schemas",
             )
-            (fixture_root / "fixtures/public-record-canonical.json").write_text("{}\n")
-
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    "-O",
-                    str(fixture_root / "conformance/check-domain-model.py"),
-                ],
-                check=False,
-                capture_output=True,
-                env={"PATH": os.environ["PATH"]},
-                text=True,
+            mismatched = copy.deepcopy(CANONICAL)
+            mismatched["publisher"] = "example.invalid"
+            (fixture_root / "fixtures/public-record-canonical.json").write_text(
+                json.dumps(mismatched) + "\n"
             )
 
-        self.assertNotEqual(result.returncode, 0)
-        self.assertNotIn("conformance passed", result.stdout)
-        self.assertIn("canonical envelope fixture", result.stderr)
+            for optimization in ([], ["-O"]):
+                with self.subTest(optimization=optimization):
+                    result = subprocess.run(
+                        [
+                            sys.executable,
+                            *optimization,
+                            str(fixture_root / "conformance/check-domain-model.py"),
+                        ],
+                        check=False,
+                        capture_output=True,
+                        env={"PATH": os.environ["PATH"]},
+                        text=True,
+                    )
+
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertNotIn("conformance passed", result.stdout)
+                    self.assertIn(
+                        "canonical envelope fixture rejected: "
+                        "public-record-canonical.json",
+                        result.stderr,
+                    )
 
 
 if __name__ == "__main__":
