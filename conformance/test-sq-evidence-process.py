@@ -72,7 +72,6 @@ class SqEvidenceProcessTests(unittest.TestCase):
                 script = root / "hang.py"
                 script.write_text(
                     "import atexit, os, pathlib, signal, time\n"
-                    f"pathlib.Path({str(pid_path)!r}).write_text(str(os.getpid()))\n"
                     "def receipt():\n"
                     "    path = os.environ.get('SACRYSTY_RUNNER_CLEANUP_RECEIPT')\n"
                     "    if path and not pathlib.Path(path).exists():\n"
@@ -84,15 +83,44 @@ class SqEvidenceProcessTests(unittest.TestCase):
                     "    raise SystemExit(0)\n"
                     "atexit.register(receipt)\n"
                     "signal.signal(signal.SIGTERM, stop)\n"
+                    f"pathlib.Path({str(pid_path)!r}).write_text(str(os.getpid()))\n"
                     "deadline = time.monotonic() + 5\n"
                     "while time.monotonic() < deadline:\n"
                     "    time.sleep(0.1)\n"
                 )
+                real_popen = subprocess.Popen
+
+                def start_ready_fixture(*args, **kwargs):
+                    nonlocal pid
+                    process = real_popen(*args, **kwargs)
+                    try:
+                        deadline = time.monotonic() + 2
+                        ready = False
+                        while time.monotonic() < deadline:
+                            try:
+                                ready = pid_path.read_bytes() == str(process.pid).encode(
+                                    "ascii"
+                                )
+                            except FileNotFoundError:
+                                ready = False
+                            if ready or process.poll() is not None:
+                                break
+                            time.sleep(0.01)
+                        self.assertTrue(ready, "timeout fixture did not become ready")
+                        pid = process.pid
+                    except BaseException:
+                        _close_owned_process(process, ())
+                        raise
+                    return process
+
                 outputs = self.make_paths(directory)
                 limits = process_boundary.PROCESS_LIMITS[mode]
                 pid: int | None = None
                 try:
                     with (
+                        mock.patch.object(
+                            process_boundary.subprocess, "Popen", start_ready_fixture
+                        ),
                         mock.patch.dict(
                             process_boundary.PROCESS_LIMITS,
                             {
@@ -114,8 +142,10 @@ class SqEvidenceProcessTests(unittest.TestCase):
                             [sys.executable, str(script)],
                         )
                 finally:
-                    if pid_path.is_file():
-                        pid = int(pid_path.read_text())
+                    if pid is not None:
+                        self.assertEqual(
+                            pid_path.read_bytes(), str(pid).encode("ascii")
+                        )
                 self.assertIsNotNone(pid)
                 self.assert_process_gone(int(pid))
                 self.assertFalse(outputs.status.exists())
