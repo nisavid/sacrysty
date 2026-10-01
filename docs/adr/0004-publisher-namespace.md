@@ -6,6 +6,9 @@
 
 ## Context and decision
 
+This decision supersedes the publisher-relationship paragraph in
+[ADR 0002](0002-genesis-integration-boundary.md#decision-proposed-for-review).
+
 The public-record envelope already requires `publisher` and a qualified
 `record_id`, but independent field grammars admit a record ID from an unrelated
 namespace. `publisher` identifies the namespace owner. The qualifier before
