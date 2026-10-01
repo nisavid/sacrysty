@@ -1,6 +1,6 @@
 # ADR 0004: Publisher namespace and record identity
 
-- **Status:** proposed for the pre-1.0 public contract; maintainer approval pending
+- **Status:** accepted for the pre-1.0 public contract through [publisher namespace implementation](https://github.com/nisavid/sacrysty/pull/34)
 - **Owning issue:** [Establish Sacrysty's immutable public genesis](https://github.com/nisavid/sacrysty/issues/3)
 - **Source decision:** [Publisher namespace decision](https://github.com/nisavid/sacrysty/issues/28#issuecomment-5916220812)
 
@@ -45,7 +45,17 @@ Any affected adopter selection and qualification are separate work.
 
 Value-free fixtures and the serialized checker cover equality, dot-boundary
 extension, mismatch, and prefix lookalikes under normal and optimized Python.
-The checks establish envelope admission only. The repository-required
-threat-model review is a separate bounded review of the final normative
-revision. Its result, explicit maintainer approval, genesis acceptance, and
-adopter-lock updates remain pending.
+The checks establish envelope admission only.
+
+The renewed threat-model and affected security review was clean within the
+publisher namespace scope on candidate
+`724fc4fb65fed50f09d93896b8d744779a3d5106`; its report SHA-256 is
+`d335d01803d817064fd42f8fc7f9cb849b55690e7b5240e4a42eecd599520722`.
+I approved the namespace rule and proceeding to squash-merge once current
+checks and feedback were clear, retaining the unresolved original macOS
+cleanup cause as an open diagnostic follow-up. The published revision
+[`9232530a16413242ea28bfb417138637b24b9768`](https://github.com/nisavid/sacrysty/commit/9232530a16413242ea28bfb417138637b24b9768)
+has the reviewed tree `732b4037f0f0ada415950e8aeea55b1510fce323`.
+This approval covers the publisher change. Genesis acceptance, any affected
+adopter-lock update, and renewed affected qualification remain separate.
+The successful unmodified macOS rerun establishes no causal cleanup repair.
