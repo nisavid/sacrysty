@@ -29,21 +29,18 @@ Historical evidence remains unchanged.
 
 ## Current stage
 
-The repository contains governance, a non-operational Rust library, public-record
-envelope source, disposable crypto-tool probes, a signing profile, and a
-synthetic Python custody adapter. The
+The repository contains a non-operational Rust library, public-record envelope
+source, disposable `sq`/`sqv` conformance probes, and a synthetic Python custody
+adapter. The
 [substrate decision](https://github.com/nisavid/sacrysty/issues/2#issuecomment-5568558765)
-selects one root Cargo package/library named `sacrysty`; `src/lib.rs` is empty
-apart from its documentation. There is no executable or public API. Add `sacryd`
-only when a concrete helper needs it; documentation does not depend on a CLI.
+selects one root Cargo package/library named `sacrysty`; `src/lib.rs` remains a
+documented build placeholder. There is no Rust executable or public product API.
+Add `sacryd` only when a concrete helper needs it; documentation does not depend
+on a CLI.
 
-The public domain model defines the record envelope and inert extensions.
-Record-family body schemas are not supplied. Command grammar and generic
-cryptographic authority or custody behavior remain with their owning Sacrysty
-decisions. Codiquary owns release-authority, publication, verifier, protocol,
-and executable release-conformance semantics; Sacrysty may consume accepted
-Codiquary contracts but does not restate them. The conformance probes exercise
-only disposable inputs, and the adapter exercises synthetic workers. Genesis
-acceptance, hardware qualification, release publication, and private adoption
-remain separate. No released package, private binding, or production state
-exists here.
+The public-record envelope and inert extension boundary are settled. Record-family
+body schemas, command grammar, authority semantics, custody behavior, and protocol
+implementation remain with their owning Wayfinder work. Genesis integration is
+in progress; accepted genesis closure, a qualified custody runtime, private
+deployment, and a release remain absent. Repository source and conformance
+evidence grant no production authority.
