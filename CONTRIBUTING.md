@@ -7,7 +7,8 @@ explicit about what their evidence proves.
 
 1. Link the issue that owns the change and claim it when the Wayfinder protocol
    applies.
-2. Read `CONTEXT.md` and preserve the public/private ownership boundary.
+2. Read `GLOSSARY.md` and `CONTEXT.md`, and preserve the public/private ownership
+   boundary.
 3. Update normative source before derived fixtures, reference output, or
    documentation.
 4. Use a Conventional Commit message.

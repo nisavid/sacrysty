@@ -1,15 +1,16 @@
 # Sacrysty context
 
-This file records only accepted terms and their source-level crosswalk. It does
-not define cryptographic, authority, custody, or protocol semantics.
+Read [GLOSSARY.md](GLOSSARY.md) for accepted names. This file records their
+source-level crosswalk, ownership, and the current source stage. It does not
+define cryptographic, authority, custody, or protocol semantics.
 
-## Accepted names
+## Source crosswalk
 
-| Surface | Accepted name | Technical crosswalk |
-| --- | --- | --- |
-| Project and institution | Sacrysty | The public reusable cryptographic-operations product in `nisavid/sacrysty`. |
-| Public-facing operator | Sacrystan | The human-facing operator surface; its exact behavior and implementation remain unsettled. |
-| Prospective command | `sacryd` | Pronounced “sacred.” A future thin entrypoint for a concrete helper, not a prerequisite for documentation. |
+| Accepted name | Source-level crosswalk |
+| --- | --- |
+| Sacrysty | The project repository is `nisavid/sacrysty`. |
+| Sacrystan | Its exact behavior and implementation remain unsettled. |
+| `sacryd` | A future thin entrypoint for a concrete helper, not a prerequisite for documentation. |
 
 Background or internal workers and published bodies of practice remain unnamed.
 Assign names only if and when those concepts need them.

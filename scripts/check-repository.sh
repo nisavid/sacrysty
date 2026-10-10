@@ -9,6 +9,7 @@ required=(
   README.md
   AGENTS.md
   CONTEXT.md
+  GLOSSARY.md
   LICENSE
   NOTICE
   GOVERNANCE.md
