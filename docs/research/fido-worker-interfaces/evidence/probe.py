@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 import base64
+import fcntl
 import hashlib
 import json
 import os
@@ -48,22 +49,74 @@ def load_trace(path):
         return None
 
 
-def hash_age(path):
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(path, flags)
-    try:
-        s = os.fstat(fd)
-        if not stat.S_ISREG(s.st_mode) or s.st_size <= 0 or s.st_size > AGE_SIZE_CAP:
+def hash_age(fd):
+    """Hash bounded bytes from an open descriptor, rewinding it first."""
+    os.lseek(fd, 0, os.SEEK_SET)
+    h = hashlib.sha256()
+    total = 0
+    while True:
+        block = os.read(fd, 131072)
+        if not block:
+            break
+        total += len(block)
+        if total > AGE_SIZE_CAP:
             raise Fail("age_premise")
-        h = hashlib.sha256()
+        h.update(block)
+    return h.hexdigest()
+
+
+def verified_age(path):
+    # The pinned research artifact is Linux/amd64. Never fall back to executing
+    # its source pathname, even when a platform cannot supply a sealed snapshot.
+    """Return a sealed executable snapshot only after its pinned digest matches."""
+    if not all(hasattr(os, name) for name in (
+        "memfd_create", "MFD_CLOEXEC", "MFD_ALLOW_SEALING", "O_NOFOLLOW",
+    )) or not all(hasattr(fcntl, name) for name in (
+        "F_ADD_SEALS", "F_GET_SEALS", "F_SEAL_WRITE", "F_SEAL_GROW",
+        "F_SEAL_SHRINK", "F_SEAL_SEAL",
+    )):
+        raise Fail("age_execution_platform")
+    source = None
+    snapshot = None
+    try:
+        source = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK)
+        s = os.fstat(source)
+        if (not stat.S_ISREG(s.st_mode) or not s.st_mode & 0o111
+                or s.st_size <= 0 or s.st_size > AGE_SIZE_CAP):
+            raise Fail("age_premise")
+        snapshot = os.memfd_create("sacrysty-age-probe", os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING)
+        total = 0
         while True:
-            block = os.read(fd, 131072)
+            block = os.read(source, 131072)
             if not block:
                 break
-            h.update(block)
-        return h.hexdigest()
+            total += len(block)
+            if total > AGE_SIZE_CAP:
+                raise Fail("age_premise")
+            pending = memoryview(block)
+            while pending:
+                written = os.write(snapshot, pending)
+                if written <= 0:
+                    raise Fail("age_execution_binding")
+                pending = pending[written:]
+        os.fchmod(snapshot, 0o500)
+        seals = (fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW
+                 | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL)
+        fcntl.fcntl(snapshot, fcntl.F_ADD_SEALS, seals)
+        if fcntl.fcntl(snapshot, fcntl.F_GET_SEALS) & seals != seals:
+            raise Fail("age_execution_binding")
+        if hash_age(snapshot) != AGE_SHA:
+            raise Fail("age_digest_before")
+        verified = snapshot
+        snapshot = None
+        return verified
+    except OSError as e:
+        raise Fail("age_execution_binding") from e
     finally:
-        os.close(fd)
+        if source is not None:
+            os.close(source)
+        if snapshot is not None:
+            os.close(snapshot)
 
 
 def cleanup_group(p):
@@ -270,15 +323,17 @@ def fixture_ok(trace):
     )
 
 
-def spawn(age, identity, env, output_dir):
+def spawn(age_fd, identity, env, output_dir):
+    """Launch one bounded probe child from the verified executable descriptor."""
     p = subprocess.Popen(
-        [age, "-e", "-i", identity],
+        [f"/proc/self/fd/{age_fd}", "-e", "-i", identity],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         cwd=output_dir,
         env=env,
         close_fds=True,
+        pass_fds=(age_fd,),
         start_new_session=True,
     )
     children.append(p)
@@ -292,6 +347,7 @@ def spawn(age, identity, env, output_dir):
     }
 
     def drain(stream, key):
+        """Capture a bounded stream and terminate its child group on overflow."""
         total_key = key + "_total"
         while True:
             block = stream.read(4096)
@@ -383,6 +439,7 @@ def purge_output(output_dir):
 
 
 def main():
+    """Run both synthetic branches and retain only versioned observations."""
     if len(sys.argv) != 3 or not all(os.path.isabs(x) for x in sys.argv[1:]):
         return 64
     age, output_dir = sys.argv[1:]
@@ -392,22 +449,23 @@ def main():
     os.umask(0o077)
     os.mkdir(output_dir, 0o700)
     result = {
-        "schema": "sacrysty-age-interface-probe-v2",
+        "schema": "sacrysty-age-interface-probe-v3",
         "probe_status": "error",
         "failure_class": "internal",
     }
 
     def global_timeout(_signum, _frame):
+        """Abort probe work when its process-wide deadline expires."""
         raise Fail("global_bound")
 
     signal.signal(signal.SIGALRM, global_timeout)
     signal.alarm(GLOBAL_SECONDS)
 
+    age_fd = None
     try:
         if not os.access(age, os.X_OK):
             raise Fail("age_premise")
-        if hash_age(age) != AGE_SHA:
-            raise Fail("age_digest_before")
+        age_fd = verified_age(age)
 
         bindir = os.path.join(output_dir, "bin")
         tmpdir = os.path.join(output_dir, "tmp")
@@ -432,7 +490,7 @@ def main():
 
         with open(mode, "w", encoding="ascii") as f:
             f.write("pin")
-        p, state, threads = spawn(age, identity, env, output_dir)
+        p, state, threads = spawn(age_fd, identity, env, output_dir)
         bounded, pin_rc, stdout, stderr = finish(p, state, threads, 8)
         group_clean = cleanup_group(p)
         trace = load_trace(os.path.join(output_dir, "pin.json"))
@@ -446,6 +504,7 @@ def main():
         result["premises"] = {
             "age_digest_before": True,
             "age_regular_executable": True,
+            "age_sealed_executable": True,
             "controlled_path": True,
             "fresh_output": True,
             "fresh_session_piped_stdio": True,
@@ -453,6 +512,7 @@ def main():
             "recipient_v1_pin_fixture": True,
             "value_free_environment": True,
         }
+        result["age_execution"] = {"binding": "sealed_memfd", "sha256": AGE_SHA}
         result["pin"] = {
             "age_exit_before_cleanup": category(pin_rc),
             "request_sent": trace.get("request") is True,
@@ -474,7 +534,7 @@ def main():
 
         with open(mode, "w", encoding="ascii") as f:
             f.write("cancel")
-        p, state, threads = spawn(age, identity, env, output_dir)
+        p, state, threads = spawn(age_fd, identity, env, output_dir)
         ready_end = time.monotonic() + 4
         trace = None
         while time.monotonic() < ready_end:
@@ -530,7 +590,7 @@ def main():
             "stderr": "empty" if not stderr else "nonempty",
         }
 
-        if hash_age(age) != AGE_SHA:
+        if hash_age(age_fd) != AGE_SHA:
             raise Fail("age_digest_after")
         result["premises"]["age_digest_after"] = True
         result["probe_status"] = "complete"
@@ -551,6 +611,8 @@ def main():
                 thread.join(1)
             if any(thread.is_alive() for thread in threads):
                 captures_clean = False
+        if age_fd is not None:
+            os.close(age_fd)
         fixtures_removed = purge_output(output_dir)
         result["cleanup"] = {
             "owned_process_groups": processes_clean,
@@ -566,4 +628,5 @@ def main():
     return 0 if result["probe_status"] == "complete" else 1
 
 
-raise SystemExit(main())
+if __name__ == "__main__":
+    raise SystemExit(main())

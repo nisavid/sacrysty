@@ -6,7 +6,7 @@ The frozen age v1.3.2 and unchanged Typage v0.3.1 sources expose a usable proces
 
 This record is an implementation input, not a qualification, acceptance, advisory-clearance, release, containment, or production-suitability result. It does not settle publisher namespace, verification ownership, success meaning, or retained evidence.
 
-The immutable publication inventory is [evidence-manifest.json](fido-worker-interfaces/evidence-manifest.json).
+The current maintained inventory is [evidence-manifest.json](fido-worker-interfaces/evidence-manifest.json). The [original publication inventory](https://github.com/nisavid/sacrysty/blob/42be6287db9bfdd2e938c03e825e44ab463ee7cb/docs/research/fido-worker-interfaces/evidence-manifest.json) remains pinned to the historical source snapshot.
 
 ## Frozen inputs and candidate construction
 
@@ -45,7 +45,9 @@ The tool identity and raw receipts are [govulncheck-tool.json](fido-worker-inter
 
 ## Exact runtime observations
 
-The retained probe is [probe.py](fido-worker-interfaces/evidence/probe.py), SHA-256 `6c7471d9ed5f0c5323647d90b48da537c436486fad00c81177350c828b59caa6`. Its [execution receipt](fido-worker-interfaces/evidence/interface-execution-receipt.json) records the expected age digest, a fresh session, closed outer stdin, piped outer stdout and stderr, exit 0 in 0.12132000299607171 seconds, empty outer streams, and only `observations.json` retained. The [observations](fido-worker-interfaces/evidence/observations.json) report `probe_status: complete`, `failure_class: none`, all premises true, and all cleanup fields true.
+The originally executed probe is [probe.py](https://github.com/nisavid/sacrysty/blob/42be6287db9bfdd2e938c03e825e44ab463ee7cb/docs/research/fido-worker-interfaces/evidence/probe.py), SHA-256 `6c7471d9ed5f0c5323647d90b48da537c436486fad00c81177350c828b59caa6`. Its [execution receipt](fido-worker-interfaces/evidence/interface-execution-receipt.json) records the expected age digest, a fresh session, closed outer stdin, piped outer stdout and stderr, exit 0 in 0.12132000299607171 seconds, empty outer streams, and only `observations.json` retained. The [observations](fido-worker-interfaces/evidence/observations.json) report `probe_status: complete`, `failure_class: none`, all premises true, and all cleanup fields true.
+
+The historical v2 digest premises alone cannot establish executable identity when the input pathname can be replaced between hashing and execution. No compromise of this receipt is established. The [maintained probe](fido-worker-interfaces/evidence/probe.py) now emits v3 observations under [ADR 0005](../adr/0005-research-probe-executable-binding.md); the original receipt and observations are unchanged.
 
 The fake plugin was the only `age-plugin-test` on a controlled `PATH`. For both branches, the probe's recorded premises establish `--age-plugin=recipient-v1`, delivery of the public synthetic encoded identity, one nonempty `wrap-file-key` request body carrying the key to be wrapped, the labels extension, and phase completion. This supports explicit identity-driven selection of that synthetic recipient-v1 executable. It does not support the identity-v1 or real-plugin seam.
 
@@ -68,7 +70,7 @@ At Sacrysty commit [`3cb793d2fee306df9b4960d5f9460b19d84eab85`](https://github.c
 
 ## Audit commands
 
-From `docs/research/`, the retained bytes can be checked without executing a candidate:
+From `docs/research/`, the current inventory can be checked without executing a candidate. To audit the original publication, run these commands in the historical snapshot linked above:
 
 ```sh
 sha256sum -c <(jq -r '.files[] | "\(.sha256)  fido-worker-interfaces/\(.path)"' \
@@ -100,7 +102,7 @@ python3 fido-worker-interfaces/evidence/probe.py /absolute/path/to/AGE_BINARY \
   /absolute/path/to/FRESH_NONEXISTENT_OUTPUT_DIR
 ```
 
-Exact artifact reproduction also depends on the recorded source archives, module files, custom Go toolchain, build environment, and scanner/database snapshot. The probe itself verifies the age digest before and after execution and rejects an existing output directory.
+Exact artifact reproduction also depends on the recorded source archives, module files, custom Go toolchain, build environment, and scanner/database snapshot. The maintained probe copies the age input into a Linux memfd, seals its bytes before digest verification, and executes that same retained descriptor for both branches. Its v3 digest premises refer to the sealed object; a later source-path change does not alter execution. Sealing and executable `/proc/self/fd` support are required, with no pathname fallback. The output directory must be fresh, and it and its ancestor namespace remain trusted. This mechanism does not qualify native-loader or plugin identity. The historical age artifact has not been rerun with this revision.
 
 ## Conclusions for the worker-contract decision
 

@@ -13,5 +13,8 @@ conformance changes, threat-model impact, and status.
 - [ADR 0004](0004-publisher-namespace.md) records the publisher namespace
   relationship and requires threat-model review and maintainer approval.
 
+- [ADR 0005](0005-research-probe-executable-binding.md) binds retained research
+  probe execution to sealed verified bytes and preserves historical evidence.
+
 The provenance handoff links the pre-repository decisions that constrain this
 work.
