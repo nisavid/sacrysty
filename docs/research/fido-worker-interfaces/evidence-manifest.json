@@ -1,5 +1,5 @@
 {
-  "scope": "Immutable input and value-free evidence inventory for bounded interface research; no runtime or custody qualification.",
+  "scope": "Current maintained source and retained value-free evidence inventory; original publication is preserved at historical_snapshot_revision. No runtime or custody qualification.",
   "files": [
     {
       "path": "evidence/age-xcrypto056-build.json",
@@ -78,8 +78,8 @@
     },
     {
       "path": "evidence/probe.py",
-      "bytes": 17169,
-      "sha256": "6c7471d9ed5f0c5323647d90b48da537c436486fad00c81177350c828b59caa6"
+      "bytes": 19388,
+      "sha256": "c970ee9ce026c1b6a7ae24411ce81cc9724c4ed4dcab2f35093c0163cec20656"
     },
     {
       "path": "evidence/source-inputs.json",
@@ -91,5 +91,6 @@
       "bytes": 1967,
       "sha256": "df8012d964fc53b3e539e33f5c364f94343ead3f608c13eae33af4694feae286"
     }
-  ]
+  ],
+  "historical_snapshot_revision": "42be6287db9bfdd2e938c03e825e44ab463ee7cb"
 }

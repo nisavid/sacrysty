@@ -19,6 +19,7 @@ Each check is also available separately:
 
 | Command | Exercised surface | Evidence boundary |
 | --- | --- | --- |
+| `python3 conformance/test-fido-interface-probe.py` | Retained research probe executable binding | Linux sealed-snapshot substitution, mutation, rejection, and cleanup controls; binding tests skip without sealing APIs, while fail-closed and historical-evidence checks remain. Synthetic scripts and a native control do not qualify the historical age artifact. |
 | `python3 conformance/check-domain-model.py` | Canonical and hostile serialized public-record fixtures | `envelope_admissible` checks strict JSON, schema-derived envelope structure, and inert extensions; family bodies remain unvalidated. |
 | `python3 conformance/test-domain-model.py` | Checker rejection and diagnostic behavior | Constructed valid and malformed envelopes, including optimized Python. |
 | `python3 conformance/test-strict-json.py` | Shared strict decoder | Duplicate members, non-finite numbers, UTF-8, syntax, exact finite decimals, and preserved JSON string content. |
