@@ -50,6 +50,7 @@ def load_trace(path):
 
 
 def hash_age(fd):
+    """Hash bounded bytes from an open descriptor, rewinding it first."""
     os.lseek(fd, 0, os.SEEK_SET)
     h = hashlib.sha256()
     total = 0
@@ -67,6 +68,7 @@ def hash_age(fd):
 def verified_age(path):
     # The pinned research artifact is Linux/amd64. Never fall back to executing
     # its source pathname, even when a platform cannot supply a sealed snapshot.
+    """Return a sealed executable snapshot only after its pinned digest matches."""
     if not all(hasattr(os, name) for name in (
         "memfd_create", "MFD_CLOEXEC", "MFD_ALLOW_SEALING", "O_NOFOLLOW",
     )) or not all(hasattr(fcntl, name) for name in (
@@ -322,6 +324,7 @@ def fixture_ok(trace):
 
 
 def spawn(age_fd, identity, env, output_dir):
+    """Launch one bounded probe child from the verified executable descriptor."""
     p = subprocess.Popen(
         [f"/proc/self/fd/{age_fd}", "-e", "-i", identity],
         stdin=subprocess.PIPE,
@@ -344,6 +347,7 @@ def spawn(age_fd, identity, env, output_dir):
     }
 
     def drain(stream, key):
+        """Capture a bounded stream and terminate its child group on overflow."""
         total_key = key + "_total"
         while True:
             block = stream.read(4096)
@@ -435,6 +439,7 @@ def purge_output(output_dir):
 
 
 def main():
+    """Run both synthetic branches and retain only versioned observations."""
     if len(sys.argv) != 3 or not all(os.path.isabs(x) for x in sys.argv[1:]):
         return 64
     age, output_dir = sys.argv[1:]
@@ -450,6 +455,7 @@ def main():
     }
 
     def global_timeout(_signum, _frame):
+        """Abort probe work when its process-wide deadline expires."""
         raise Fail("global_bound")
 
     signal.signal(signal.SIGALRM, global_timeout)
