@@ -2,9 +2,10 @@
 
 ## Project context
 
-Read `CONTEXT.md` before planning or editing. Use its accepted terms in source,
-tests, documentation, issues, and commits. Keep `README.md` as the verified
-human entrypoint and put detailed contracts and decisions under `docs/`.
+Read `GLOSSARY.md` and `CONTEXT.md` before planning or editing. Use the glossary's
+accepted terms in source, tests, documentation, issues, and commits. Keep
+`README.md` as the verified human entrypoint and put detailed contracts and
+decisions under `docs/`.
 
 When introducing or revising domain concepts, follow the
 [shared domain naming convention](https://github.com/nisavid/dotfiles/blob/main/docs/research/CRYPTO_RELEASE_OPS_NAMING.md#domain-naming-convention).

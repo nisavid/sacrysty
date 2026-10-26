@@ -6,7 +6,7 @@ for the candidate. The owning issue controls acceptance of the complete genesis.
 
 ## Inputs and provenance
 
-1. Read `CONTEXT.md`, the owning issue, and
+1. Read `GLOSSARY.md`, `CONTEXT.md`, the owning issue, and
    [the input receipt](../provenance/genesis-inputs.md).
 2. Read the live native map and all dependency pages. Check assignments before
    work, and preserve the current coordinator's claim across a handoff.
