@@ -12,7 +12,7 @@ Tooling note: Impeccable 4.3.1 has no terminal platform token. This section reco
 
 ## Users
 
-Technically proficient system owners managing their cryptographic identities and operations are the primary users. The owner of `nisavid/dotfiles` is the first adopter; developers and automation are integration users.
+Technically proficient system owners managing their cryptographic identities and operations are the primary users. Ivan is the first adopter; developers and automation are integration users.
 
 ## Product Purpose
 
@@ -38,7 +38,7 @@ Required genesis journeys cover:
 
 The selected integration classes are versioned serialized contracts, a compact machine-oriented CLI, and a deliberately small library facade. Machine results use versioned JSON envelopes on stdout, diagnostics use stderr, and exit classes and library errors are typed. Exact methods, commands, and wire shapes remain open. No additional language binding or terminal framework is selected. Public interfaces are experimental before 1.0; no post-1.0 support promise follows.
 
-Sacrysty owns reusable crypto contracts and implementation, adapters, public profiles, conformance, qualification records, documentation, governance, compatibility declarations, and its releases. Codiquary owns release authority, publication, verifier state, and protocol semantics. Adopters own exact deployment locks, private bindings, operational state, real providers, ceremonies, production mutations, and acceptance evidence. The `nisavid/dotfiles` repository is the first adopter. Repository evidence grants no production authority.
+Sacrysty owns reusable crypto contracts and implementation, adapters, public profiles, conformance, qualification records, documentation, governance, compatibility declarations, and its releases. Codiquary owns release authority, publication, verifier state, and protocol semantics. Adopters own exact deployment locks, private bindings, operational state, real providers, ceremonies, production mutations, and acceptance evidence. Ivan’s dotfiles are the first adopter. Repository evidence grants no production authority.
 
 The accepted custody contract retains the signer secret in a fresh role-specific worker; it supplies no universal private-key-return interface. Tests and examples use disposable, value-free fixtures.
 

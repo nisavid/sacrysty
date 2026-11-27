@@ -33,8 +33,7 @@ their wire semantics.
 Private deployment bindings, exact adopter locks, hosts, accounts, provider
 resources, opaque secret references, protected bootstrap state, ceremonies,
 production mutations, and acceptance evidence belong to each system user.
-The `nisavid/dotfiles` repository remains the first adopter and owns those
-personal surfaces.
+Ivan's dotfiles remain the first adopter and own those personal surfaces.
 
 - Never add a plaintext secret, private key, credential, production identifier,
   private deployment value, or live-provider payload.
