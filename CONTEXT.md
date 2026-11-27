@@ -21,7 +21,7 @@ Assign names only if and when those concepts need them.
 | --- | --- |
 | Generic cryptographic-operation contracts and implementation, adapter interfaces and maintained reference adapters, public profiles, value-free fixtures, cryptographic conformance, qualification records, documentation, governance, compatibility declarations, and Sacrysty releases | Sacrysty |
 | Release-authority, publication, verifier, and protocol contracts, plus executable release conformance | Codiquary |
-| Exact adopter locks, private or encrypted deployment bindings, real hosts and accounts, provider resources, opaque secret references, protected bootstrap state, ceremonies, production mutations, and acceptance evidence | The system user; Ivan's dotfiles are the first adopter |
+| Exact adopter locks, private or encrypted deployment bindings, real hosts and accounts, provider resources, opaque secret references, protected bootstrap state, ceremonies, production mutations, and acceptance evidence | The system user; the `nisavid/dotfiles` repository is the first adopter |
 
 The earlier planning labels `crypto-ops` and Cryptosacristy refer to the same
 project lane in historical evidence. Sacrysty is the current project name;
