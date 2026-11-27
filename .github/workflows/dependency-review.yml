@@ -2,7 +2,7 @@ name: Dependency review
 
 on:
   pull_request:
-    branches: [main]
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
@@ -23,3 +23,28 @@ jobs:
         with:
           fail-on-severity: low
           retry-on-snapshot-warnings: true
+
+  required:
+    name: Dependency review gate
+    needs: [dependency-review]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    permissions: {}
+    steps:
+      - name: Check required job results
+        if: ${{ always() }}
+        shell: sh
+        working-directory: .
+        env:
+          NEEDS_RESULTS: ${{ join(needs.*.result, ',') }}
+        run: |
+          printf 'Needed job results: %s\n' "$NEEDS_RESULTS"
+          remaining=$NEEDS_RESULTS
+          while :; do
+            case "$remaining" in
+              success) exit 0 ;;
+              success,*) remaining=${remaining#*,} ;;
+              *) exit 1 ;;
+            esac
+          done
