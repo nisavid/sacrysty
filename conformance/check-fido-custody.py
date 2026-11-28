@@ -73,21 +73,50 @@ if case == "oversized-stderr":
 if case == "timeout":
     time.sleep(2)
     raise SystemExit(0)
-if case in {"lingering-child", "redirected-child"}:
+if case == "ordered-descendant":
+    directory = os.path.dirname(__file__)
+    readiness = os.path.join(directory, "ordered-descendant-ready")
+    release = os.path.join(directory, "ordered-descendant-release")
+    survived = os.path.join(directory, "ordered-descendant-survived")
+    child = (
+        "import os,pathlib,time\n"
+        f"readiness = pathlib.Path({readiness!r})\n"
+        f"release = pathlib.Path({release!r})\n"
+        f"survived = pathlib.Path({survived!r})\n"
+        "parent = os.getppid()\n"
+        "readiness.write_text(\n"
+        "    f'{os.getpid()} {os.getpgid(0)} {parent} {os.getpgid(parent)}\\n',\n"
+        "    encoding='ascii',\n"
+        ")\n"
+        "while not release.is_file():\n"
+        "    time.sleep(0.01)\n"
+        "survived.write_text('alive\\n', encoding='ascii')\n"
+    )
+    subprocess.Popen([sys.executable, "-c", child])
+    deadline = time.monotonic() + 1.0
+    while True:
+        try:
+            with open(readiness, encoding="ascii") as readiness_file:
+                readiness_record = readiness_file.read()
+        except OSError:
+            readiness_record = ""
+        if readiness_record.endswith("\n") and len(readiness_record.split()) == 4:
+            break
+        if time.monotonic() >= deadline:
+            raise SystemExit(20)
+        time.sleep(0.01)
+if case == "redirected-child":
     marker = os.path.join(os.path.dirname(__file__), f"{case}-survived")
     child = (
         "import pathlib,time; time.sleep(0.4); "
         f"pathlib.Path({marker!r}).write_text('alive')"
     )
-    if case == "redirected-child":
-        subprocess.Popen(
-            [sys.executable, "-c", child],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    else:
-        subprocess.Popen([sys.executable, "-c", child])
+    subprocess.Popen(
+        [sys.executable, "-c", child],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 if case == "cleanup-denied":
     marker = os.path.join(os.path.dirname(__file__), "cleanup-denied-child-pid")
     child = (
@@ -564,6 +593,112 @@ def wait_for_process_group_exit(process_group: int, *, timeout_seconds: float) -
         if time.monotonic() >= deadline:
             raise AssertionError("worker process group survived cleanup")
         time.sleep(0.01)
+
+
+class OrderedDescendantSurvived(AssertionError):
+    pass
+
+
+def read_ordered_descendant_readiness(
+    marker: pathlib.Path,
+) -> tuple[int, int, int, int]:
+    try:
+        record = marker.read_bytes()
+    except OSError as exc:
+        raise AssertionError("ordered descendant did not publish readiness") from exc
+    fields = record.removesuffix(b"\n").split()
+    if not record.endswith(b"\n") or len(fields) != 4:
+        raise AssertionError("ordered descendant readiness record is incomplete")
+    try:
+        values = tuple(int(field) for field in fields)
+    except ValueError as exc:
+        raise AssertionError("ordered descendant readiness record is malformed") from exc
+    encoded_values = tuple(str(value).encode("ascii") for value in values)
+    canonical_record = b" ".join(encoded_values) + b"\n"
+    if any(value <= 0 for value in values) or record != canonical_record:
+        raise AssertionError("ordered descendant readiness record is not canonical")
+    return values
+
+
+def check_ordered_descendant_cleanup(
+    directory: pathlib.Path,
+    command: list[str],
+    environment: dict[str, str],
+) -> None:
+    readiness = directory / "ordered-descendant-ready"
+    release = directory / "ordered-descendant-release"
+    survived = directory / "ordered-descendant-survived"
+    for marker in (readiness, release, survived):
+        marker.unlink(missing_ok=True)
+
+    expect_failure(
+        OneShotCustodyAdapter(
+            command,
+            timeout_seconds=1.5,
+            environment=environment,
+        ),
+        request_for("ordered-descendant"),
+        "worker timeout",
+    )
+    _child_pid, child_group, worker_pid, worker_group = (
+        read_ordered_descendant_readiness(readiness)
+    )
+    require(
+        child_group == worker_group == worker_pid,
+        "ordered descendant did not share the worker process group",
+    )
+
+    group_survived = process_group_exists(child_group)
+    release.write_text("release\n", encoding="ascii")
+    if group_survived:
+        deadline = time.monotonic() + 2.0
+        while not survived.is_file() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        wait_for_process_group_exit(child_group, timeout_seconds=2.0)
+        require(
+            survived.is_file(),
+            "ordered descendant survived cleanup but did not observe its release",
+        )
+        raise OrderedDescendantSurvived(
+            "ordered descendant survived process-group cleanup"
+        )
+
+    require(
+        not survived.exists(),
+        "ordered descendant produced a post-cleanup survival marker",
+    )
+
+
+def check_ordered_descendant_broken_cleanup_control(
+    directory: pathlib.Path,
+    command: list[str],
+    environment: dict[str, str],
+) -> None:
+    real_terminate_and_reap = fido_custody._terminate_and_reap
+
+    def reap_leader_without_group_cleanup(process: subprocess.Popen[bytes]) -> None:
+        # This control deliberately omits the group signal and absence probe.
+        process.wait(timeout=1.0)
+        for pipe in (process.stdin, process.stdout, process.stderr):
+            if pipe is not None:
+                try:
+                    pipe.close()
+                except OSError:
+                    pass
+
+    control_failed = False
+    try:
+        fido_custody._terminate_and_reap = reap_leader_without_group_cleanup
+        try:
+            check_ordered_descendant_cleanup(directory, command, environment)
+        except OrderedDescendantSurvived:
+            control_failed = True
+    finally:
+        fido_custody._terminate_and_reap = real_terminate_and_reap
+    require(
+        control_failed,
+        "broken descendant cleanup control did not make the ordered check fail",
+    )
 
 
 def check_background_unwrap_rejected(
@@ -1735,25 +1870,10 @@ def main() -> None:
             )
             if time.monotonic() - started >= 0.8:
                 raise AssertionError(f"{case} was not rejected at the byte limit")
-        started = time.monotonic()
-        expect_failure(
-            OneShotCustodyAdapter(
-                command,
-                timeout_seconds=0.1,
-                environment=environment,
-            ),
-            request_for("lingering-child"),
-            "worker timeout",
+        check_ordered_descendant_cleanup(directory_path, command, environment)
+        check_ordered_descendant_broken_cleanup_control(
+            directory_path, command, environment
         )
-        if time.monotonic() - started >= 1.0:
-            raise AssertionError(
-                "worker child retaining pipes was not boundedly terminated"
-            )
-        time.sleep(0.5)
-        if (pathlib.Path(directory) / "lingering-child-survived").exists():
-            raise AssertionError(
-                "worker child retaining pipes survived process-group cleanup"
-            )
         redirected = OneShotCustodyAdapter(command, environment=environment).unwrap(
             request_for("redirected-child")
         )
